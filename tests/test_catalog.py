@@ -108,3 +108,20 @@ def test_a_model_larger_than_the_card_does_not_fit():
 def test_budget_is_positive_and_below_the_card(desktop: bool):
     budget = config.usable_vram_mib(desktop)
     assert 0 < budget < config.TARGET_VRAM_MIB
+
+
+def test_the_agent_floor_separates_usable_models_from_unusable():
+    """A window below the harness's own prompt cannot run it at all.
+
+    Qwen3-8B is the case that matters: it is the model the tutorial sends people
+    to first, and its 32k ceiling is under Claude Code's ~40k system prompt.
+    """
+    usable, unusable = [], []
+    for m in catalog.load_catalog():
+        window = catalog.plan(m).per_session
+        (usable if window > config.AGENT_PROMPT_FLOOR else unusable).append(m.name)
+
+    assert "Qwen3-8B" in unusable, "the 8B should be flagged as too small for agents"
+    assert "Qwen3.8-27B" in usable
+    assert "Qwen3.6-35B-A3B" in usable
+    assert usable, "no model can run an agent harness -- the catalogue is broken"

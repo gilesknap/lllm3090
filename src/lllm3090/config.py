@@ -60,6 +60,12 @@ WORKSPACE_RESERVE_MIB = 1024
 #: Two is the minimum that keeps a parent and one subagent resident together.
 DEFAULT_PARALLEL = 2
 
+#: Tokens an agent harness spends on system prompt and tool definitions before
+#: any of your work, every turn. Claude Code sits around 40k. A model whose
+#: per-conversation window is below this cannot run it at all -- the first
+#: message fails -- and a window only slightly above it leaves no room to work.
+AGENT_PROMPT_FLOOR = 40_000
+
 #: Ceiling on slots handed out automatically.
 #:
 #: A model that reaches its RoPE ceiling before it exhausts VRAM can have extra

@@ -77,6 +77,43 @@ downloading: 8 × 40 × 1.57 MB against 8 × 30 × 3.35 MB is **2.6× the expert
 traffic per token** for the model with fewer parameters, and it showed up as
 148 vs 70 tok/s measured. Nothing in either model card would have told you.
 
+## Correction: this model is for OFFLOADED MoE only
+
+Measured on a 3090 with five models served entirely from VRAM by llama.cpp,
+the predictions above were wrong -- not marginally, and always in the same
+direction:
+
+| model | predicted | measured | error |
+|---|---|---|---|
+| Qwen3.6-35B-A3B | ~90 | **126** | −29% |
+| Qwen3.6-35B-A3B-Q4KS | ~90 | **124** | −27% |
+| gpt-oss-20b | ~80 | **160** | −50% |
+| Qwen3-8B (dense) | ~60 | **115** | −48% |
+| Qwen3.8-27B (dense) | ~35 | **35** | 0% |
+
+The one that was right is the one whose arithmetic actually applied.
+
+**The formula divides by PCIe bandwidth. That is only the roof when experts
+cross PCIe.** When the whole checkpoint is resident in VRAM nothing is fetched,
+the roof is VRAM bandwidth, and predicting from 26 GB/s under-calls by 2-5x.
+Applying an offload model to a resident model is a category error, and it hid
+behind "±30%" for three of these.
+
+What the resident case actually looks like on this card:
+
+```
+dense:        bytes/token = weights − embeddings, read at 936 GB/s
+              Qwen3.8-27B: 16 GB → 58 roofline → 35 measured (60% of roof)
+
+resident MoE: bytes/token = active experts + attention, also at 936 GB/s
+              gpt-oss-20b: ~1.9 GB → 492 roofline → 160 measured (33% of roof)
+```
+
+So dense reaches ~60% of its roofline and resident MoE only ~33%: the expert
+GEMMs are small and the kernel spends proportionally more time not moving
+weights. **Use 60% of roofline for dense and 33% for resident MoE**, and reserve
+the PCIe formula for models whose experts genuinely live in host RAM.
+
 ## Worked example: a model that fits and is still unusable
 
 DeepSeek-V4-Flash — top-6, 43 layers, moe_intermediate 2048, hidden 4096, FP4

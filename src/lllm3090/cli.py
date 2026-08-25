@@ -315,7 +315,12 @@ def panel(
 
 
 @app.command()
-def claude(ctx: typer.Context) -> None:
+def claude(
+    ctx: typer.Context,
+    force: bool = typer.Option(
+        False, "--force", help="Launch even if the window is too small."
+    ),
+) -> None:
     """Launch Claude Code against the local engine.
 
     Sets Anthropic environment variables for one subprocess only -- nothing is
@@ -332,6 +337,32 @@ def claude(ctx: typer.Context) -> None:
     # the pool and it will happily fill the whole thing, leaving nothing for the
     # subagents that share it.
     window = str(catalog.plan(known).per_session if known else 32768)
+    # A window that cannot hold the harness's own prompt is not a small window,
+    # it is a broken session: the first message fails with "prompt is too long".
+    # Say so here rather than let the user discover it inside Claude Code.
+    if int(window) <= config.AGENT_PROMPT_FLOOR and not force:
+        alternatives = [
+            f"{m.name} ({catalog.plan(m).per_session // 1024}k)"
+            for m in catalog.load_catalog()
+            if catalog.plan(m).per_session > config.AGENT_PROMPT_FLOOR * 1.5
+        ]
+        typer.echo(
+            f"{model} serves {int(window) // 1024}k per conversation, but Claude "
+            f"Code sends about {config.AGENT_PROMPT_FLOOR // 1000}k tokens of "
+            "system prompt and tool definitions on every turn.\n"
+            "The first message would fail with 'prompt is too long'.\n"
+        )
+        if alternatives:
+            typer.echo("Models with room to work: " + ", ".join(alternatives))
+        typer.echo("\nUse --force to try anyway.")
+        raise typer.Exit(1)
+    if int(window) < config.AGENT_PROMPT_FLOOR * 1.5:
+        typer.echo(
+            f"Warning: {int(window) // 1024}k per conversation leaves little room "
+            f"after Claude Code's ~{config.AGENT_PROMPT_FLOOR // 1000}k system "
+            "prompt. Expect frequent compaction."
+        )
+
     typer.echo(f"Claude Code -> {model} @ {config.ENGINE_URL} (context {window})")
     env = dict(
         os.environ,

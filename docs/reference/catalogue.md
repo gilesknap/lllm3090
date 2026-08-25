@@ -45,13 +45,17 @@ gives an answer several times wrong. Check for them.
 
 ## Current entries
 
-| model | size | kind | KiB/token | per conversation | speed |
+| model | size | kind | KiB/token | per conversation | speed (measured) |
 |---|---|---|---|---|---|
-| Qwen3.8-27B | 15.4 GB | dense | 64 | 101k × 2 | 35 tok/s (measured) |
-| Qwen3.6-35B-A3B | 17.7 GB | moe | 20 | 212k × 2 | ~90 tok/s |
-| Qwen3.6-35B-A3B-Q4KS | 20.9 GB | moe | 20 | 61k × 2 | ~90 tok/s |
-| gpt-oss-20b | 12.1 GB | moe | 24 | 128k × 2 | ~80 tok/s |
-| Qwen3-8B | 5.0 GB | dense | 144 | 32k × 2 | ~60 tok/s |
+| Qwen3.8-27B | 15.4 GB | dense | 64 | 101k × 2 | 35 tok/s |
+| Qwen3.6-35B-A3B | 17.7 GB | moe | 20 | 212k × 2 | **126 tok/s** |
+| Qwen3.6-35B-A3B-Q4KS | 20.9 GB | moe | 20 | 61k × 2 | 124 tok/s |
+| gpt-oss-20b | 12.1 GB | moe | 24 | 128k × 4 | **160 tok/s** |
+| Qwen3-8B | 5.0 GB | dense | 144 | 32k × 4 | 115 tok/s |
+
+Every figure here is measured on an RTX 3090, not derived. The sparse models
+decode 3-4× faster than the dense 27B despite being larger, which is the whole
+argument in [](../explanations/dense-vs-moe.md).
 
 "× 2" is the slot count: the cache is a pool shared by concurrent
 conversations, and the default leaves room for two. See

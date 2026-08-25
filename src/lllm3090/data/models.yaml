@@ -47,14 +47,16 @@ models:
     params: 35B total, 3B active (256 experts, 8 per token)
     kv_kib_per_token: 20
     max_ctx: 262144
-    expected_tok_s: 90
-    verified: false
+    expected_tok_s: 126
+    verified: true
     tags: [general, agentic, long-context]
     notes: >-
       Sparse: only 3B parameters are read per token, so it decodes far faster
-      than its size suggests. Its hybrid attention also makes KV unusually cheap
-      (20 KiB/token against the 27B's 64), which is what puts the full 262k
-      context in reach. The best choice for long agentic sessions.
+      than its size suggests -- measured at 126 tok/s on a short prompt and
+      112 at 40k, against the dense 27B's 35. Its hybrid attention also makes KV
+      unusually cheap (20 KiB/token against the 27B's 64), which is what puts
+      the full 262k context in reach. Cold prefill at 40k is 21 s, warm 0.1 s.
+      The best choice for long agentic sessions.
 
   - id: qwen3.6-35b-a3b-q4ks
     name: Qwen3.6-35B-A3B-Q4KS
@@ -65,14 +67,15 @@ models:
     params: 35B total, 3B active
     kv_kib_per_token: 20
     max_ctx: 262144
-    expected_tok_s: 90
-    verified: false
+    expected_tok_s: 124
+    verified: true
     tags: [general, agentic, quality]
     notes: >-
       The same model at a higher bit-rate -- K-quants rather than I-quants, about
-      0.4 bits per weight more. Leaves much less room for KV, so you trade
-      context for fidelity. Take this one only if you have measured that the
-      IQ4_XS build is not good enough for your work.
+      0.4 bits per weight more. Decodes the same (124 tok/s measured, against the
+      IQ4_XS build's 126) but leaves far less room for KV: 61k per conversation
+      against 212k. You are trading context for fidelity at no speed cost. Take
+      it only if you have measured that IQ4_XS is not good enough for your work.
 
   - id: gpt-oss-20b
     name: gpt-oss-20b
@@ -83,14 +86,17 @@ models:
     params: 21B total, 3.6B active
     kv_kib_per_token: 24
     max_ctx: 131072
-    expected_tok_s: 80
-    verified: false
-    tags: [general, small, reasoning-effort]
+    expected_tok_s: 160
+    verified: true
+    tags: [general, small, reasoning-effort, fastest]
     notes: >-
       Native MXFP4 -- this is the format the model was released in, not a
-      re-quantisation, so nothing is lost in conversion. Small enough to leave
-      most of the card free. Exposes a reasoning_effort control that changes
-      output length rather than speed, which is the useful knob for agent work.
+      re-quantisation, so nothing is lost in conversion. The fastest model here
+      by a clear margin -- 160 tok/s measured on a short prompt, 113 at 40k --
+      and small enough to leave most of the card free, so it gets four slots at
+      its full 128k window. Cold prefill at 40k is 17 s, warm 0.1 s. Exposes a
+      reasoning_effort control that changes output length rather than speed,
+      which is the useful knob for agent work.
 
   - id: qwen3-8b
     name: Qwen3-8B
@@ -101,11 +107,14 @@ models:
     params: 8B dense
     kv_kib_per_token: 144
     max_ctx: 32768
-    expected_tok_s: 60
-    verified: false
+    expected_tok_s: 115
+    verified: true
     tags: [small, smoke-test]
     notes: >-
       A 5 GB download for checking the install works end to end before
-      committing to a 15-20 GB one. Note the KV cost per token is the highest
-      here despite the small weights -- 36 full-attention layers with no linear
-      or sliding layers to make them cheap. Size and context are independent.
+      committing to a 15-20 GB one. 115 tok/s measured, but **too small for an
+      agent harness**: its 32k window cannot hold Claude Code's ~40k system
+      prompt, so `lllm3090 claude` refuses it. Fine from a lighter client.
+      Note the KV cost per token is the highest here despite the small weights
+      -- 36 full-attention layers with no linear or sliding layers to make them
+      cheap. Size and context are independent.
