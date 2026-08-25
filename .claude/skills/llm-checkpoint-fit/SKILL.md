@@ -18,10 +18,19 @@ to something supported" is not the same as supported.
 - **llama.cpp**: the architecture must be in `convert_hf_to_gguf.py`, and the
   build serving it must be new enough. A GGUF someone else converted proves the
   first half only.
-- **A Python engine**: grep its model registry for `ForCausalLM` /
-  `ForConditionalGeneration` and match against `architectures[0]` in the repo's
-  `config.json`. Registry comments are worth reading -- they record which
-  *variants* are handled (dense vs MoE, wrapper configs, weight layouts).
+- **A Python engine** (FreeToken and friends): grep its model registry for
+  `ForCausalLM` / `ForConditionalGeneration` and match against
+  `architectures[0]` in the repo's `config.json`:
+
+  ```bash
+  grep -n 'ForCausalLM\|ForConditionalGeneration' \
+    <venv>/lib/python*/site-packages/freetoken/models/register.py
+  ```
+
+  Registry comments are worth reading -- they record which *variants* are
+  handled (dense vs MoE, which wrapper config, which weight layout), and the
+  distinction is load-time fatal. See [[freetoken-engine]] for a case where the
+  architecture was registered and the checkpoint still would not load.
 
 Related-but-unsupported is the common trap. FreeToken parses GGUF, but the
 registry maps **only** `Gemma4GGUFForCausalLM` — a Q4 GGUF of any other model is
