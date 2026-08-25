@@ -12,14 +12,16 @@ Work the steps in order — each one can end the enquiry on its own.
 
 ## 1. Is the architecture even registered?
 
-```bash
-grep -n 'ForCausalLM\|ForConditionalGeneration' \
-  <venv>/lib/python3.12/site-packages/freetoken/models/register.py
-```
+Every engine keeps a registry of the architectures it can load, and "related
+to something supported" is not the same as supported.
 
-Match against `architectures[0]` in the repo's `config.json`. The registry
-comments are worth reading: they record which *variants* of an architecture the
-loader handles (dense vs MoE, which wrapper config, which weight layout).
+- **llama.cpp**: the architecture must be in `convert_hf_to_gguf.py`, and the
+  build serving it must be new enough. A GGUF someone else converted proves the
+  first half only.
+- **A Python engine**: grep its model registry for `ForCausalLM` /
+  `ForConditionalGeneration` and match against `architectures[0]` in the repo's
+  `config.json`. Registry comments are worth reading -- they record which
+  *variants* are handled (dense vs MoE, wrapper configs, weight layouts).
 
 Related-but-unsupported is the common trap. FreeToken parses GGUF, but the
 registry maps **only** `Gemma4GGUFForCausalLM` — a Q4 GGUF of any other model is

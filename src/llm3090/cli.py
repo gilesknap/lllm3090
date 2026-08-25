@@ -49,7 +49,9 @@ def doctor() -> None:
 
 
 @app.command("install-engine")
-def install_engine(force: bool = typer.Option(False, help="Reinstall if present.")) -> None:
+def install_engine(
+    force: bool = typer.Option(False, help="Reinstall if present."),
+) -> None:
     """Fetch and verify the pinned llama.cpp build."""
     target = config.LLAMA_DIR
     if (target / "llama-server").exists() and not force:
@@ -59,10 +61,13 @@ def install_engine(force: bool = typer.Option(False, help="Reinstall if present.
     typer.echo(f"Downloading {LLAMA_ASSET} ...")
     with tempfile.TemporaryDirectory() as tmp:
         archive = Path(tmp) / LLAMA_ASSET
-        urllib.request.urlretrieve(LLAMA_URL, archive)  # noqa: S310 - pinned URL
+        urllib.request.urlretrieve(LLAMA_URL, archive)
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         if digest != LLAMA_SHA256:
-            typer.echo(f"Checksum mismatch!\n  expected {LLAMA_SHA256}\n  got      {digest}")
+            typer.echo(
+                f"Checksum mismatch!\n"
+                f"  expected {LLAMA_SHA256}\n  got      {digest}"
+            )
             raise typer.Exit(1)
         typer.echo("Checksum verified.")
         extract_to = Path(tmp) / "x"
@@ -84,9 +89,13 @@ def install_engine(force: bool = typer.Option(False, help="Reinstall if present.
 @app.command()
 def models() -> None:
     """List the curated catalogue and what is already downloaded."""
-    typer.echo(f"{'MODEL':<24}{'SIZE':>8}{'KIND':>7}{'CONTEXT':>12}  {'STATE':<12}SPEED")
+    header = f"{'MODEL':<24}{'SIZE':>8}{'KIND':>7}{'CONTEXT':>12}  {'STATE':<12}SPEED"
+    typer.echo(header)
     for row in catalog.catalog_for_panel():
-        state = "installed" if row["installed"] else ("fits" if row["fits"] else "too big")
+        state = (
+            "installed" if row["installed"]
+            else ("fits" if row["fits"] else "too big")
+        )
         speed = f"~{row['expected_tok_s']} tok/s" if row["expected_tok_s"] else "-"
         if row["verified"]:
             speed += " (measured)"
@@ -114,7 +123,7 @@ def status() -> None:
 @app.command()
 def start(
     model: str = typer.Argument(..., help="Directory name under the models dir."),
-    ctx: int = typer.Option(None, help="Context window. Defaults to the catalogue value."),
+    ctx: int = typer.Option(None, help="Context window; defaults to the catalogue."),
 ) -> None:
     """Start the engine on an installed model."""
     entry = next((m for m in catalog.installed() if m["name"] == model), None)

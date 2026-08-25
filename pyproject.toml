@@ -54,6 +54,9 @@ line-length = 88
 
 [tool.ruff.lint]
 extend-select = ["B", "C4", "E", "F", "I", "UP", "W"]
+# Every blind except here wraps a probe of something optional (nvidia-smi,
+# an HTTP endpoint that may not be up yet). Failing them loudly would be wrong.
+ignore = ["BLE001"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"

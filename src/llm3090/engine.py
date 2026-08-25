@@ -89,7 +89,9 @@ def start(model_path: str, name: str, ctx: int, wait: int = 300) -> tuple[bool, 
     """
     binary = server_binary()
     if not binary.exists():
-        return False, f"llama-server not found at {binary}; run 'llm3090 install-engine'"
+        return False, (
+            f"llama-server not found at {binary}; run 'llm3090 install-engine'"
+        )
     if not Path(model_path).exists():
         return False, f"model file not found: {model_path}"
 

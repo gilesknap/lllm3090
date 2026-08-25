@@ -29,9 +29,13 @@ def _smi(query: str) -> str | None:
 def check_os() -> tuple[bool, str]:
     release = Path("/etc/os-release")
     if not release.exists():
-        return False, "no /etc/os-release; this installer targets Debian and derivatives"
+        return False, (
+            "no /etc/os-release; this installer targets Debian and derivatives"
+        )
     fields = dict(
-        line.split("=", 1) for line in release.read_text().splitlines() if "=" in line
+        line.split("=", 1)
+        for line in release.read_text().splitlines()
+        if "=" in line
     )
     name = fields.get("PRETTY_NAME", "").strip('"')
     ids = f"{fields.get('ID', '')} {fields.get('ID_LIKE', '')}"
@@ -68,7 +72,9 @@ def check_driver() -> tuple[bool, str]:
     except ValueError:
         return False, f"unparseable driver version {version!r}"
     if major < config.MIN_DRIVER_VERSION:
-        return False, f"driver {version} is below the minimum {config.MIN_DRIVER_VERSION}"
+        return False, (
+            f"driver {version} is below the minimum {config.MIN_DRIVER_VERSION}"
+        )
     return True, f"driver {version}"
 
 
@@ -86,7 +92,10 @@ def check_vulkan() -> tuple[bool, str]:
 def check_engine() -> tuple[bool, str]:
     binary = config.LLAMA_DIR / "llama-server"
     if not binary.exists():
-        return False, f"llama-server not installed at {binary} (run: llm3090 install-engine)"
+        return False, (
+            f"llama-server not installed at {binary} "
+            "(run: llm3090 install-engine)"
+        )
     return True, str(binary)
 
 

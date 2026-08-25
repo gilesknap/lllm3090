@@ -101,7 +101,7 @@ def _run(dl: Download) -> None:
     except urllib.error.HTTPError as e:
         dl.state = "error"
         dl.detail = f"HTTP {e.code} for {url_for(dl.repo, dl.file)}"
-    except Exception as e:  # noqa: BLE001 - surfaced to the user verbatim
+    except Exception as e:
         dl.state = "error"
         dl.detail = str(e)
 

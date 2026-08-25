@@ -172,7 +172,7 @@ async def _tail_stream():
             await asyncio.sleep(0.7)
         except asyncio.CancelledError:
             raise
-        except Exception as e:  # noqa: BLE001 - reported into the stream
+        except Exception as e:
             yield f"data: {json.dumps('[tail error] ' + str(e))}\n\n"
             await asyncio.sleep(2)
 

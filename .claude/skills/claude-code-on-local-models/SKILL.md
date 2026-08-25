@@ -12,9 +12,9 @@ plugin.
 ## Launch by environment, never by config file
 
 ```bash
-ft launch claude     # sets, for that subprocess only:
+llm3090 claude       # sets, for that subprocess only:
 ANTHROPIC_BASE_URL=http://127.0.0.1:1919
-ANTHROPIC_AUTH_TOKEN=freetoken
+ANTHROPIC_AUTH_TOKEN=local
 ANTHROPIC_MODEL=<checkpoint>
 ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL=<checkpoint>
 CLAUDE_CODE_SUBAGENT_MODEL=<checkpoint>
@@ -22,19 +22,20 @@ CLAUDE_CODE_MAX_CONTEXT_TOKENS=262144
 CLAUDE_CODE_MAX_OUTPUT_TOKENS=32768
 ```
 
-The `claude` target writes **nothing** to `~/.claude/settings.json` — it hands
+`llm3090 claude` writes **nothing** to `~/.claude/settings.json` — it hands
 the variables to one subprocess, so a plain `claude` in another terminal still
 reaches the hosted model on normal auth. That is what makes head-to-head
-comparison possible, and it is worth preserving. The other `ft launch` targets
-(`opencode`, `codex`, `openclaw`, `hermes`) **do** write config files to disk.
+comparison possible, and it is worth preserving. Tools that write their configuration to disk instead (some agent CLIs do)
+cannot be made non-invasive this way -- check before pointing one at a local
+endpoint.
 
 Point all three default model slots at the local checkpoint deliberately, so
 `/model` inside that session stays local instead of silently falling back to the
 paid API.
 
-Note the mismatch: `ft launch` reads `CLAUDE_CODE_MAX_CONTEXT_TOKENS` from the
-checkpoint's advertised ceiling, not from the KV actually allocated. Claude Code
-will believe whatever that says.
+Claude Code believes whatever `CLAUDE_CODE_MAX_CONTEXT_TOKENS` says. Set it from
+the context the engine was actually started with, never from the ceiling the
+model advertises -- the two are routinely different by 2x.
 
 ## The floor nobody budgets for
 
@@ -108,7 +109,7 @@ already knows — rather than at reading code.
 ## Measuring fairly
 
 - Run both sides against the same repo on the same machine, in two terminals.
-- Gate every timing on `ft ctl --base-url http://127.0.0.1:1919 stats` reporting
+- Gate every timing on the engine's `/slots` endpoint reporting
   `active=0` before *and* after; a live session on the same GPU once faked a 47%
   regression.
 - On gpt-oss models, `reasoning_effort` changes output **length**, not speed
