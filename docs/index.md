@@ -11,7 +11,7 @@ The engine exposes **both** the OpenAI API and Anthropic's `/v1/messages`, so
 Claude Code and OpenAI-compatible clients work against it without a translation
 proxy.
 
-```{image} images/panel.jpg
+```{image} images/panel.png
 :alt: The lllm3090 control panel
 ```
 

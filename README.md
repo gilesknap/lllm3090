@@ -57,7 +57,7 @@ warns.
 
 ## The panel
 
-![The lllm3090 control panel](docs/images/panel.jpg)
+![The lllm3090 control panel](docs/images/panel.png)
 
 Engine state and VRAM at the top, the models you have with start/stop, the
 curated list with what fits this card and what it will do, and the engine log
