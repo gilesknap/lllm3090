@@ -12,9 +12,23 @@ Debian 13 or a derivative (Ubuntu 24.04 / 26.04), an RTX 3090, and the NVIDIA
 driver already working:
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/gilesknap/lllm3090/main/install.sh | bash
+```
+
+Or, if you would rather read it first — which is the sensible thing to do with
+anything you pipe into a shell:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gilesknap/lllm3090/main/install.sh -o install.sh
+less install.sh
+bash install.sh
+```
+
+Cloning works too, and is what you want if you intend to change anything:
+
+```bash
 git clone https://github.com/gilesknap/lllm3090
-cd lllm3090
-./install.sh
+cd lllm3090 && ./install.sh
 ```
 
 The installer touches nothing outside `$HOME` except a handful of apt packages,

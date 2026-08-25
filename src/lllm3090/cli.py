@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import os
+import pathlib
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
 import urllib.request
+from importlib import resources
 from pathlib import Path
 
 import typer
@@ -170,6 +172,46 @@ def start(
 def stop() -> None:
     """Stop the engine and free the VRAM."""
     typer.echo(engine.stop()[1])
+
+
+@app.command("install-service")
+def install_service(
+    enable: bool = typer.Option(True, help="Enable and start it once written."),
+) -> None:
+    """Write the systemd user unit for the panel, and start it.
+
+    Lives here rather than in the installer so that installing from PyPI --
+    where there is no checkout to copy a unit file out of -- works identically.
+    """
+    unit = (
+        resources.files("lllm3090.data")
+        .joinpath("lllm3090-panel.service")
+        .read_text()
+    )
+    # The unit needs an absolute path to this interpreter's console script.
+    unit = unit.replace("@BIN@", str(pathlib.Path(sys.argv[0]).resolve()))
+    target = pathlib.Path.home() / ".config/systemd/user/lllm3090-panel.service"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(unit)
+    typer.echo(f"Wrote {target}")
+
+    if not enable:
+        return
+    if not shutil.which("systemctl"):
+        typer.echo("No systemctl here; start the panel with: lllm3090 panel")
+        return
+    unit_name = "lllm3090-panel.service"
+    for args in (["daemon-reload"], ["enable", "--now", unit_name]):
+        result = subprocess.run(
+            ["systemctl", "--user", *args], capture_output=True, text=True, check=False
+        )
+        if result.returncode != 0:
+            typer.echo(
+                f"systemctl --user {' '.join(args)} failed: {result.stderr.strip()}"
+            )
+            typer.echo("Start the panel manually with: lllm3090 panel")
+            return
+    typer.echo("Panel enabled and started on http://127.0.0.1:8080")
 
 
 @app.command()

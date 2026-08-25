@@ -67,6 +67,27 @@ def test_small_models_get_their_whole_window():
     assert p.capped_by == "rope"
 
 
+def test_rope_capped_models_are_given_the_free_slots():
+    """If the architecture runs out before the card does, spend the rest on slots."""
+    for m in catalog.load_catalog():
+        p = catalog.plan(m)
+        if p.capped_by != "rope":
+            continue
+        assert p.parallel > config.DEFAULT_PARALLEL, (
+            f"{m.id} has spare cache it could serve another conversation with"
+        )
+        assert p.parallel <= config.MAX_AUTO_PARALLEL
+        # Free means free: every slot still gets the whole window.
+        assert p.per_session == m.max_ctx
+
+
+def test_an_explicit_slot_count_is_honoured_exactly():
+    """Auto-expansion must not override what the user asked for."""
+    for m in catalog.load_catalog():
+        for n in (1, 2, 3):
+            assert catalog.plan(m, n).parallel == n
+
+
 def test_headless_is_never_worse_than_desktop():
     for m in catalog.load_catalog():
         assert catalog.fit(m, desktop=False).pool_q8 >= catalog.fit(m).pool_q8

@@ -27,14 +27,19 @@ ceiling was reached and there is spare VRAM that cannot be spent on context:
 | Qwen3.8-27B | 203k | 101k | 50k |
 | Qwen3.6-35B-A3B | 256k (max) | 212k | 106k |
 | Qwen3.6-35B-A3B-Q4KS | 122k | 61k | 30k |
-| gpt-oss-20b | 128k (max) | 128k (max) | 128k (max) |
-| Qwen3-8B | 32k (max) | 32k (max) | 32k (max) |
+| gpt-oss-20b | 128k (max) | **128k (max), 4 slots** | 128k (max) |
+| Qwen3-8B | 32k (max) | **32k (max), 4 slots** | 32k (max) |
 
-Two rows behave differently from the rest, and the difference is worth
-understanding. **`gpt-oss-20b` and `Qwen3-8B` hit their architectural ceiling
-long before they run out of VRAM**, so extra slots cost them nothing at all —
-four concurrent conversations, each with the full window. For those models
-concurrency is free and there is no reason to run fewer than you might use.
+Two rows behave differently from the rest. **`gpt-oss-20b` and `Qwen3-8B` hit
+their architectural ceiling long before they run out of VRAM**, so extra slots
+cost them nothing: the spare cache cannot become a longer conversation, so it
+becomes more of them.
+
+Those two are therefore started with **four** slots rather than two, each still
+holding the model's full window. You get the concurrency for free and give up
+nothing. The automatic grant stops at four — llama.cpp sizes some buffers per
+slot, and a fifth simultaneous conversation on one GPU is of speculative value —
+but `--parallel 6` is yours if you want it.
 
 The other three trade linearly: every doubling of slots halves the window.
 

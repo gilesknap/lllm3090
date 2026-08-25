@@ -11,9 +11,35 @@
 ## Install
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/gilesknap/lllm3090/main/install.sh | bash
+```
+
+:::{tip}
+Piping a script from the internet into a shell means trusting whoever controls
+that URL. If you would rather look first — and you should, with anything that
+runs `sudo` — download it, read it, then run it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gilesknap/lllm3090/main/install.sh -o install.sh
+less install.sh
+bash install.sh
+```
+:::
+
+Cloning does the same thing, and is what you want if you plan to change
+anything — run from a checkout, the installer installs *that checkout* rather
+than the published package:
+
+```bash
 git clone https://github.com/gilesknap/lllm3090
-cd lllm3090
-./install.sh
+cd lllm3090 && ./install.sh
+```
+
+To install a branch or a fork instead, set `LLLM3090_SOURCE` to anything pip
+understands:
+
+```bash
+LLLM3090_SOURCE="git+https://github.com/you/lllm3090.git@my-branch" bash install.sh
 ```
 
 The installer:
@@ -22,7 +48,8 @@ The installer:
    rather than a stack trace if something is missing;
 2. installs four apt packages if absent (`python3-venv`, `python3-pip`,
    `libvulkan1`, `curl`) — the only thing it touches outside `$HOME`;
-3. creates a virtualenv at `~/.local/share/lllm3090/venv` and installs the package;
+3. creates a virtualenv at `~/.local/share/lllm3090/venv` and installs the
+   package — from PyPI when piped, or from the checkout when run inside one;
 4. downloads a **pinned** llama.cpp build and verifies its SHA-256;
 5. installs and starts a systemd *user* service for the panel, and enables
    linger so it survives logout.

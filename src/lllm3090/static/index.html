@@ -53,16 +53,21 @@
   #logbox .sep{color:#7d8f98;border-top:1px dashed #33454e;margin:.4rem 0;padding-top:.3rem}
   .dot{width:7px;height:7px;border-radius:99px;display:inline-block;background:var(--bad)}
   .dot.on{background:var(--ok)}
-  .cat{display:flex;flex-direction:column;gap:.45rem;margin-top:.5rem}
-  .c{display:flex;align-items:center;gap:.6rem;padding:.55rem .7rem;border:1px solid var(--rule);border-radius:5px}
+  .cat{display:flex;flex-direction:column;gap:1.1rem;margin-top:.9rem}
+  .c{padding:.85rem .9rem;border:1px solid var(--rule);border-radius:6px}
   .c.no{opacity:.5}
+  .chead{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
   .c .nm{font-weight:700}
-  .c .meta{color:var(--ink2);font-size:.74rem;flex:1}
+  .c .meta{color:var(--ink2);font-size:.74rem;flex:1;min-width:12rem}
   .c button{padding:.3rem .7rem;font-size:.74rem}
+  .cact{margin-left:auto;display:flex;align-items:center;gap:.5rem}
   .tag{font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;padding:.1rem .35rem;
        border-radius:3px;border:1px solid var(--rule);color:var(--ink2)}
-  .note{color:var(--ink2);font-size:.74rem;margin:.3rem 0 0}
-  details summary{cursor:pointer;font-size:.8rem;color:var(--ink2)}
+  .note{color:var(--ink2);font-size:.74rem;margin:.45rem 0 0;line-height:1.55}
+  .c details{margin-top:.55rem}
+  .c .bar{margin-top:.6rem}
+  details summary{cursor:pointer;font-size:.78rem;color:var(--ink2)}
+  details[open] summary{margin-bottom:.15rem}
 </style>
 </head>
 <body>
@@ -146,31 +151,42 @@ async function refresh(){
     $('last').textContent = `${s.last.ok ? 'ok' : 'FAILED'}: ${s.last.action}\n${s.last.detail}`;
   }
 
-  // catalogue
+  // Catalogue: built once, then only the mutable parts are updated. Rewriting
+  // innerHTML on every poll would close any <details> the reader had opened,
+  // which is maddening while watching a download.
   const dls = Object.fromEntries(s.downloads.map(d => [d.id, d]));
-  $('catalog').innerHTML = s.catalog.map(c => {
-    const d = dls[c.id];
-    let right;
-    if (d && (d.state === 'downloading' || d.state === 'queued')){
-      right = `<span class="k">${d.percent}% · ${d.rate_mib_s} MiB/s</span>
-               <button onclick="cancelDl('${c.id}')">Cancel</button>`;
-    } else if (c.installed){
-      right = `<span class="pill p-ok">installed</span>`;
-    } else if (!c.fits){
-      right = `<span class="pill p-bad">too big</span>`;
-    } else {
-      right = `<button onclick="download('${c.id}')">Download</button>`;
-    }
-    const bar = (d && d.state === 'downloading')
-      ? `<div class="bar" style="margin-top:.4rem"><i style="width:${d.percent}%"></i></div>` : '';
-    const err = (d && d.state === 'error') ? `<p class="note" style="color:var(--bad)">${d.detail}</p>` : '';
-    return `<div class="c ${c.fits?'':'no'}">
-       <span class="nm">${c.name}</span>
-       <span class="tag">${c.kind}</span>
-       <span class="meta">${c.gb} GB · ${fmtCtx(c.max_ctx)} ctx · ~${c.expected_tok_s} tok/s${c.verified?' (measured)':''}</span>
-       ${right}</div>${bar}${err}
-       <details><summary>${c.params}</summary><p class="note">${c.notes}</p></details>`;
-  }).join('');
+  if (!$('catalog').dataset.built){
+    $('catalog').innerHTML = s.catalog.map(c => `
+      <div class="c ${c.fits?'':'no'}" id="c-${c.id}">
+        <div class="chead">
+          <span class="nm">${c.name}</span>
+          <span class="tag">${c.kind}</span>
+          <span class="meta">${c.gb} GB · ${fmtCtx(c.max_ctx)} × ${c.parallel} · ~${c.expected_tok_s} tok/s${c.verified?' (measured)':''}</span>
+          <span class="cact" id="a-${c.id}"></span>
+        </div>
+        <div class="bar" id="b-${c.id}" style="display:none"><i></i></div>
+        <p class="note" id="e-${c.id}" style="display:none;color:var(--bad)"></p>
+        <details><summary>${c.params}</summary><p class="note">${c.notes}</p></details>
+      </div>`).join('');
+    $('catalog').dataset.built = 1;
+  }
+  s.catalog.forEach(c => {
+    const d = dls[c.id], act = $('a-'+c.id), bar = $('b-'+c.id), err = $('e-'+c.id);
+    if (!act) return;
+    const busyDl = d && (d.state === 'downloading' || d.state === 'queued');
+    const html = busyDl
+      ? `<span class="k">${d.percent}% · ${d.rate_mib_s} MiB/s</span>
+         <button onclick="cancelDl('${c.id}')">Cancel</button>`
+      : c.installed ? `<span class="pill p-ok">installed</span>`
+      : !c.fits     ? `<span class="pill p-bad">too big</span>`
+      :               `<button onclick="download('${c.id}')">Download</button>`;
+    if (act.dataset.html !== html){ act.innerHTML = html; act.dataset.html = html; }
+    bar.style.display = busyDl ? 'block' : 'none';
+    if (busyDl) bar.firstElementChild.style.width = d.percent + '%';
+    const bad = d && d.state === 'error';
+    err.style.display = bad ? 'block' : 'none';
+    if (bad) err.textContent = d.detail;
+  });
 }
 
 async function post(url){ try { await fetch(url, {method:'POST'}); } catch {} refresh(); }

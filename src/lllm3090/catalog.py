@@ -131,6 +131,7 @@ def plan(model: Model, parallel: int | None = None, desktop: bool = True) -> Pla
     Spare capacity therefore goes to concurrency rather than to a window the
     model cannot use -- which is what leaves room for an agent's subagents.
     """
+    requested = parallel
     parallel = parallel or config.DEFAULT_PARALLEL
     f = fit(model, desktop)
     if not f.fits:
@@ -138,8 +139,13 @@ def plan(model: Model, parallel: int | None = None, desktop: bool = True) -> Pla
 
     share = f.pool_q8 // parallel
     if share >= model.max_ctx:
-        # Enough for everyone; each conversation gets the architecture's maximum
-        # and any leftover VRAM simply is not requested.
+        # The architecture runs out before the card does. Spare cache cannot be
+        # turned into a longer conversation, so turn it into more of them: hand
+        # out every slot that still gets the full window, up to the automatic
+        # ceiling. An explicit --parallel is honoured as given.
+        if requested is None:
+            affordable = f.pool_q8 // model.max_ctx
+            parallel = max(parallel, min(affordable, config.MAX_AUTO_PARALLEL))
         return Plan(model.max_ctx * parallel, parallel, model.max_ctx, "rope")
     # Round the per-session window down to whole pages so the pool divides evenly.
     share = max(1024, (share // 1024) * 1024)

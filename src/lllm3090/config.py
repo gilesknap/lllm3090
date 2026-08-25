@@ -60,6 +60,15 @@ WORKSPACE_RESERVE_MIB = 1024
 #: Two is the minimum that keeps a parent and one subagent resident together.
 DEFAULT_PARALLEL = 2
 
+#: Ceiling on slots handed out automatically.
+#:
+#: A model that reaches its RoPE ceiling before it exhausts VRAM can have extra
+#: slots for free -- the spare cache cannot become context, so it may as well
+#: become admission. But llama.cpp sizes some compute buffers per slot, and the
+#: value of a fifth concurrent conversation is speculative on a single-GPU box,
+#: so the automatic grant stops here. Ask for more explicitly if you want it.
+MAX_AUTO_PARALLEL = 4
+
 
 def usable_vram_mib(desktop: bool = True) -> int:
     """VRAM available for weights plus KV cache.

@@ -8,8 +8,17 @@ set -euo pipefail
 
 PREFIX="${LLLM3090_PREFIX:-$HOME/.local/share/lllm3090}"
 VENV="$PREFIX/venv"
-UNIT_DIR="$HOME/.config/systemd/user"
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Where to install the package from. Running this out of a checkout installs
+# that checkout; piped from curl there is nothing local, so take it from PyPI.
+# Override with LLLM3090_SOURCE to install a branch or a fork.
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/pyproject.toml" ]; then
+  REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  SOURCE="${LLLM3090_SOURCE:-$REPO}"
+else
+  REPO=""
+  SOURCE="${LLLM3090_SOURCE:-lllm3090}"
+fi
 # Only what is genuinely used: python3-venv provides ensurepip (an interpreter
 # that runs is not an interpreter that can build a venv), and libvulkan1 is how
 # the engine reaches the card. The venv brings its own pip; downloads go through
@@ -77,17 +86,38 @@ mkdir -p "$PREFIX"
 python3 -m venv "$VENV"
 "$VENV/bin/pip" install --quiet --upgrade pip
 
-# The version comes from git tags via setuptools_scm. A zip download from GitHub
-# has no .git, and so does a box without git installed -- in both cases the build
-# fails with an error that names neither this project nor the remedy. Supply a
-# fallback rather than let that happen.
-if [ -d "$REPO/.git" ] && command -v git >/dev/null 2>&1; then
-  "$VENV/bin/pip" install --quiet "$REPO"
-else
-  warn "no usable git metadata here (zip download, or git not installed)"
-  warn "installing anyway; 'lllm3090 --version' will report 0.0.0+unknown"
-  SETUPTOOLS_SCM_PRETEND_VERSION_FOR_LLLM3090=0.0.0+unknown \
-    "$VENV/bin/pip" install --quiet "$REPO"
+# Installing a local tree builds it, and setuptools_scm takes the version from
+# git tags. A zip download has no .git, and neither does a box without git --
+# in both cases the build fails with an error naming neither this project nor
+# the remedy, so supply a fallback. A PyPI install has a version already.
+install_package() {
+  local src="$1"
+  if [ -d "$src" ] && { [ ! -d "$src/.git" ] || ! command -v git >/dev/null 2>&1; }; then
+    warn "no usable git metadata in $src (zip download, or git not installed)"
+    warn "installing anyway; 'lllm3090 --version' will report 0.0.0+unknown"
+    SETUPTOOLS_SCM_PRETEND_VERSION_FOR_LLLM3090=0.0.0+unknown \
+      "$VENV/bin/pip" install "$src"
+  else
+    "$VENV/bin/pip" install "$src"
+  fi
+}
+
+say "Installing $SOURCE"
+if ! install_package "$SOURCE" >/dev/null; then
+  # Fall back ONLY for the default PyPI name, which may not be published yet.
+  # An explicit LLLM3090_SOURCE that fails is an error: silently installing
+  # something else instead is how you end up debugging the wrong code.
+  if [ "$SOURCE" = "lllm3090" ]; then
+    FALLBACK="git+https://github.com/gilesknap/lllm3090.git"
+    warn "lllm3090 is not installable from PyPI yet; using $FALLBACK"
+    command -v git >/dev/null 2>&1 ||
+      $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git
+    install_package "$FALLBACK" >/dev/null || die "could not install $FALLBACK"
+  else
+    # Re-run without swallowing output so the actual error is visible.
+    install_package "$SOURCE" || true
+    die "could not install $SOURCE (see the error above)"
+  fi
 fi
 
 mkdir -p "$HOME/.local/bin"
@@ -103,26 +133,16 @@ say "Installing the llama.cpp engine (pinned build, checksum verified)"
 
 # --- service -----------------------------------------------------------------
 say "Installing the user service"
-mkdir -p "$UNIT_DIR"
-sed "s|@VENV@|$VENV|g" "$REPO/systemd/lllm3090-panel.service" > "$UNIT_DIR/lllm3090-panel.service"
+# Written by the package rather than copied from a checkout, so this works
+# identically whether you cloned or piped this script from curl.
+"$VENV/bin/lllm3090" install-service
 
-# systemd is not guaranteed: containers have no init, and not every derivative
-# uses it. The unit file is written either way; only starting it is skipped, and
-# everything else still works.
-if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
-  systemctl --user daemon-reload
-  systemctl --user enable --now lllm3090-panel.service
-
-  # Keep the panel alive when nobody is logged in, so the box can serve headless.
-  if ! loginctl show-user "$USER" --property=Linger 2>/dev/null | grep -q 'Linger=yes'; then
-    say "Enabling linger so the panel survives logout"
-    $SUDO loginctl enable-linger "$USER" ||
-      warn "could not enable linger; the panel will stop at logout"
-  fi
-else
-  warn "no systemd user session here, so the panel was not started."
-  warn "The unit is at $UNIT_DIR/lllm3090-panel.service for later; meanwhile run:"
-  warn "    $VENV/bin/lllm3090 panel"
+# Keep the panel alive when nobody is logged in, so the box can serve headless.
+if command -v loginctl >/dev/null 2>&1 &&
+   ! loginctl show-user "$USER" --property=Linger 2>/dev/null | grep -q 'Linger=yes'; then
+  say "Enabling linger so the panel survives logout"
+  $SUDO loginctl enable-linger "$USER" ||
+    warn "could not enable linger; the panel will stop at logout"
 fi
 
 # --- verify ------------------------------------------------------------------
