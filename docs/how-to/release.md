@@ -52,6 +52,11 @@ lllm3090 setup
 ```
 
 `uv tool install` gets the CLI and panel; `setup` adds the engine and the
-service. Re-running `setup` after an upgrade is harmless and picks up anything
-new — a changed engine pin, for instance, needs `lllm3090 install-engine
---force`.
+service.
+
+**Run `setup` after every upgrade, not just the first install.** Upgrading
+replaces the package under the running panel, which then reads the new data
+files with the old code — it keeps serving but every API call fails, and
+because the process never exits `Restart=on-failure` does not rescue it.
+`setup` restarts the panel, which fixes it. A changed engine pin additionally
+needs `lllm3090 install-engine --force`.

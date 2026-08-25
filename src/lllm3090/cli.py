@@ -285,7 +285,12 @@ def install_service(
         typer.echo("No systemctl here; start the panel with: lllm3090 panel")
         return
     unit_name = "lllm3090-panel.service"
-    for args in (["daemon-reload"], ["enable", "--now", unit_name]):
+    # `restart` rather than `enable --now`: after an upgrade the running panel is
+    # executing code that was swapped out from under it and will read the new
+    # data files with the old classes, which fails per-request without the
+    # process ever exiting -- so Restart=on-failure does not save it. Restart
+    # also starts it when stopped, so this covers a first install too.
+    for args in (["daemon-reload"], ["enable", unit_name], ["restart", unit_name]):
         result = subprocess.run(
             ["systemctl", "--user", *args], capture_output=True, text=True, check=False
         )
