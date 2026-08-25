@@ -3,7 +3,7 @@ requires = ["setuptools>=64", "setuptools_scm[toml]>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "llm3090"
+name = "lllm3090"
 description = "Local LLM serving for a single RTX 3090, with a browser control panel"
 readme = "README.md"
 license = "Apache-2.0"
@@ -39,14 +39,23 @@ dev = [
 ]
 
 [project.scripts]
-llm3090 = "llm3090.cli:main"
+lllm3090 = "lllm3090.cli:main"
 
 [project.urls]
-GitHub = "https://github.com/gilesknap/llm3090"
-Documentation = "https://gilesknap.github.io/llm3090"
+GitHub = "https://github.com/gilesknap/lllm3090"
+Documentation = "https://gilesknap.github.io/lllm3090"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# Without these the wheel installs the code and none of the content: no model
+# catalogue, no panel UI. The CLI would import and then fail at first use.
+"lllm3090.data" = ["*.yaml"]
+"lllm3090.static" = ["*.html"]
 
 [tool.setuptools_scm]
-version_file = "src/llm3090/_version.py"
+version_file = "src/lllm3090/_version.py"
 
 [tool.ruff]
 src = ["src", "tests"]

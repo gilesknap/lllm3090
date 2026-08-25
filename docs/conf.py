@@ -6,13 +6,13 @@ https://www.sphinx-doc.org/en/master/usage/configuration.html
 from pathlib import Path
 from subprocess import check_output
 
-import llm3090
+import lllm3090
 
-project = "llm3090"
+project = "lllm3090"
 copyright = "2026, Giles Knap"
 author = "Giles Knap"
 
-release = llm3090.__version__
+release = lllm3090.__version__
 if "+" in release:
     # Not on a tag: use the branch name, which is more useful than a dev hash.
     root = Path(__file__).absolute().parent.parent
@@ -58,7 +58,7 @@ html_title = f"{project} {version}"
 html_theme_options = {
     "logo": {"text": project},
     "use_edit_page_button": False,
-    "github_url": "https://github.com/gilesknap/llm3090",
+    "github_url": "https://github.com/gilesknap/lllm3090",
     "icon_links": [],
     "navbar_end": ["theme-switcher", "navbar-icon-links"],
     "show_toc_level": 2,

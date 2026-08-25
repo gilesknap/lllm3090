@@ -15,14 +15,14 @@ def _path(env: str, default: Path) -> Path:
 
 
 #: Where GGUF checkpoints live. One directory per model.
-MODELS_DIR = _path("LLM3090_MODELS_DIR", Path.home() / "models")
+MODELS_DIR = _path("LLLM3090_MODELS_DIR", Path.home() / "models")
 #: Pidfiles and engine logs.
-STATE_DIR = _path("LLM3090_STATE_DIR", Path.home() / ".local/state/llm3090")
+STATE_DIR = _path("LLLM3090_STATE_DIR", Path.home() / ".local/state/lllm3090")
 #: The unpacked llama.cpp build.
-LLAMA_DIR = _path("LLM3090_LLAMA_DIR", Path.home() / ".local/share/llm3090/llama.cpp")
+LLAMA_DIR = _path("LLLM3090_LLAMA_DIR", Path.home() / ".local/share/lllm3090/llama.cpp")
 
-ENGINE_PORT = int(os.environ.get("LLM3090_ENGINE_PORT", "1919"))
-PANEL_PORT = int(os.environ.get("LLM3090_PANEL_PORT", "8080"))
+ENGINE_PORT = int(os.environ.get("LLLM3090_ENGINE_PORT", "1919"))
+PANEL_PORT = int(os.environ.get("LLLM3090_PANEL_PORT", "8080"))
 ENGINE_URL = f"http://127.0.0.1:{ENGINE_PORT}"
 
 ENGINE_LOG = STATE_DIR / "engine.log"

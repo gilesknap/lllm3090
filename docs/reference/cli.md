@@ -1,7 +1,7 @@
 # Command line
 
 ```
-llm3090 <command> [options]
+lllm3090 <command> [options]
 ```
 
 | command | what it does |
@@ -25,9 +25,9 @@ through to Claude Code unchanged.
 
 | variable | default | meaning |
 |---|---|---|
-| `LLM3090_MODELS_DIR` | `~/models` | Where GGUF checkpoints live |
-| `LLM3090_STATE_DIR` | `~/.local/state/llm3090` | Pidfile and engine log |
-| `LLM3090_LLAMA_DIR` | `~/.local/share/llm3090/llama.cpp` | The engine build |
-| `LLM3090_ENGINE_PORT` | `1919` | Engine port |
-| `LLM3090_PANEL_PORT` | `8080` | Panel port |
-| `LLM3090_PREFIX` | `~/.local/share/llm3090` | Install prefix (installer only) |
+| `LLLM3090_MODELS_DIR` | `~/models` | Where GGUF checkpoints live |
+| `LLLM3090_STATE_DIR` | `~/.local/state/lllm3090` | Pidfile and engine log |
+| `LLLM3090_LLAMA_DIR` | `~/.local/share/lllm3090/llama.cpp` | The engine build |
+| `LLLM3090_ENGINE_PORT` | `1919` | Engine port |
+| `LLLM3090_PANEL_PORT` | `8080` | Panel port |
+| `LLLM3090_PREFIX` | `~/.local/share/lllm3090` | Install prefix (installer only) |

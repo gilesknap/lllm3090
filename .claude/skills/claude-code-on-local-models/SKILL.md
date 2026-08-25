@@ -12,7 +12,7 @@ plugin.
 ## Launch by environment, never by config file
 
 ```bash
-llm3090 claude       # sets, for that subprocess only:
+lllm3090 claude       # sets, for that subprocess only:
 ANTHROPIC_BASE_URL=http://127.0.0.1:1919
 ANTHROPIC_AUTH_TOKEN=local
 ANTHROPIC_MODEL=<checkpoint>
@@ -22,7 +22,7 @@ CLAUDE_CODE_MAX_CONTEXT_TOKENS=262144
 CLAUDE_CODE_MAX_OUTPUT_TOKENS=32768
 ```
 
-`llm3090 claude` writes **nothing** to `~/.claude/settings.json` — it hands
+`lllm3090 claude` writes **nothing** to `~/.claude/settings.json` — it hands
 the variables to one subprocess, so a plain `claude` in another terminal still
 reaches the hosted model on normal auth. That is what makes head-to-head
 comparison possible, and it is worth preserving. Tools that write their configuration to disk instead (some agent CLIs do)

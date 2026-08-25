@@ -5,7 +5,7 @@ venv/
 build/
 dist/
 *.egg-info/
-src/llm3090/_version.py
+src/lllm3090/_version.py
 .ruff_cache/
 .mypy_cache/
 .pytest_cache/

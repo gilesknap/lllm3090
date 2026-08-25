@@ -148,7 +148,7 @@ def plan(model: Model, parallel: int | None = None, desktop: bool = True) -> Pla
 
 def load_catalog() -> list[Model]:
     """The curated list shipped with the package."""
-    raw = resources.files("llm3090.data").joinpath("models.yaml").read_text()
+    raw = resources.files("lllm3090.data").joinpath("models.yaml").read_text()
     return [Model(**entry) for entry in yaml.safe_load(raw)["models"]]
 
 

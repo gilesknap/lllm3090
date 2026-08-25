@@ -1,11 +1,11 @@
 ---
 name: freetoken-engine
-description: FreeToken, the MoE expert-offload engine — what it buys over llama.cpp, the version pin chain its install depends on, and every failure mode hit while running it. Reference material for adding it to llm3090 as a second engine (phase 2); not currently installed. Use when working on FreeToken integration, when an offloaded-MoE model will not load, or when deciding whether a model needs offload at all.
+description: FreeToken, the MoE expert-offload engine — what it buys over llama.cpp, the version pin chain its install depends on, and every failure mode hit while running it. Reference material for adding it to lllm3090 as a second engine (phase 2); not currently installed. Use when working on FreeToken integration, when an offloaded-MoE model will not load, or when deciding whether a model needs offload at all.
 ---
 
 # FreeToken (phase 2 — not currently installed)
 
-llm3090 ships llama.cpp only. FreeToken is the engine that would be added
+lllm3090 ships llama.cpp only. FreeToken is the engine that would be added
 alongside it, and this file is what was learned running it so that work does not
 start from zero.
 
@@ -128,7 +128,7 @@ reason those wrappers existed, and any phase-2 installer needs the equivalent.
 
 ## What the phase-2 integration has to do
 
-llm3090's panel and `engine.py` assume one process, one pidfile, one port.
+lllm3090's panel and `engine.py` assume one process, one pidfile, one port.
 FreeToken does not fit that shape without work:
 
 - It runs a **supervisor** (`ft daemon`, port 1900) that owns the engine
@@ -253,7 +253,7 @@ is pinned in `ft-engine-start.sh`. Before adding a new checkpoint, run the
 - `ft ctl` takes `--base-url`, not `--port`:
   `ft ctl --base-url http://127.0.0.1:1919 stats`.
 
-## Measurement discipline (see also llm3090-runbook)
+## Measurement discipline (see also lllm3090-runbook)
 
 On a single-GPU box the benchmark and the workload are the same machine. The
 first measurement of the KV-pool change showed a catastrophic 47% throughput

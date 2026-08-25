@@ -7,4 +7,5 @@ how-to/claude-code
 how-to/remote-access
 how-to/own-gguf
 how-to/troubleshooting
+how-to/release
 ```

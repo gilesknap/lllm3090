@@ -1,6 +1,6 @@
 # The model catalogue
 
-`src/llm3090/data/models.yaml` is the curated list. Every entry has been checked
+`src/lllm3090/data/models.yaml` is the curated list. Every entry has been checked
 to exist on HuggingFace and to fit a 24 GB card with usable context left.
 
 ## Fields
@@ -57,7 +57,7 @@ gives an answer several times wrong. Check for them.
 conversations, and the default leaves room for two. See
 [](../explanations/what-fits.md).
 
-Nothing here is stored as a default. `llm3090.catalog.plan` computes it at run
+Nothing here is stored as a default. `lllm3090.catalog.plan` computes it at run
 time from `size_gb`, `kv_kib_per_token` and `max_ctx`, so the figures stay true
 if you run headless or ask for a different slot count. Storing a context default
 would eventually disagree with what fits — and did, in an early version.

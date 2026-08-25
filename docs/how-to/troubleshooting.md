@@ -1,6 +1,6 @@
 # Troubleshooting
 
-## `llm3090 doctor` fails on Vulkan
+## `lllm3090 doctor` fails on Vulkan
 
 ```
 [FAIL] vulkan  NVIDIA Vulkan ICD missing
@@ -22,7 +22,7 @@ Read the engine log in the panel. Two common causes:
 
 ## It fails immediately with a port error
 
-Something else holds 1919. `llm3090 stop` clears an engine this tool started;
+Something else holds 1919. `lllm3090 stop` clears an engine this tool started;
 if another process owns the port, find it with:
 
 ```bash
@@ -39,7 +39,7 @@ lists 4-bit and above for this reason.
 
 The panel resumes: a cancelled or failed download leaves a `.part` file and the
 next attempt continues from where it stopped. If a download fails repeatedly,
-check free space (`llm3090 doctor` reports it) and that the file still exists in
+check free space (`lllm3090 doctor` reports it) and that the file still exists in
 the HuggingFace repository — model authors do rename and remove files.
 
 ## The panel is running but the engine died with it

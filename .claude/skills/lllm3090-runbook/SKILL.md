@@ -1,19 +1,19 @@
 ---
-name: llm3090-runbook
-description: Operating the llm3090 stack — the panel, the llama.cpp engine, model downloads, and the failure modes that present as a hang. Use when starting, stopping or switching models, when the engine will not come up, when a download stalls, when the panel and the engine disagree, or before measuring anything on the box.
+name: lllm3090-runbook
+description: Operating the lllm3090 stack — the panel, the llama.cpp engine, model downloads, and the failure modes that present as a hang. Use when starting, stopping or switching models, when the engine will not come up, when a download stalls, when the panel and the engine disagree, or before measuring anything on the box.
 ---
 
-# Operating llm3090
+# Operating lllm3090
 
 One GPU, one engine. Everything below assumes that invariant.
 
 ## Layout
 
 ```
-~/.local/share/llm3090/venv/        the package
-~/.local/share/llm3090/llama.cpp/   the pinned engine build
-~/.local/state/llm3090/engine.log   what the panel streams
-~/.local/state/llm3090/engine.pid   the running engine
+~/.local/share/lllm3090/venv/        the package
+~/.local/share/lllm3090/llama.cpp/   the pinned engine build
+~/.local/state/lllm3090/engine.log   what the panel streams
+~/.local/state/lllm3090/engine.pid   the running engine
 ~/models/<Name>/*.gguf              checkpoints, one directory each
 ```
 
@@ -22,12 +22,12 @@ Ports: **1919** engine (OpenAI *and* Anthropic APIs) · **8080** panel.
 ## The commands
 
 ```bash
-llm3090 doctor                 # six checks; exits non-zero and says which failed
-llm3090 models                 # catalogue: fits, installed, expected speed
-llm3090 start <Name> [--ctx N] # stops any running engine first
-llm3090 stop                   # frees the VRAM; do this before gaming
-llm3090 status
-llm3090 claude                 # Claude Code against the local model
+lllm3090 doctor                 # six checks; exits non-zero and says which failed
+lllm3090 models                 # catalogue: fits, installed, expected speed
+lllm3090 start <Name> [--ctx N] # stops any running engine first
+lllm3090 stop                   # frees the VRAM; do this before gaming
+lllm3090 status
+lllm3090 claude                 # Claude Code against the local model
 ```
 
 The panel at `http://127.0.0.1:8080` does the same things and streams the

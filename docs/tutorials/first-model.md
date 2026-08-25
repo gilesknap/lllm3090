@@ -32,7 +32,7 @@ curl -s http://127.0.0.1:1919/v1/chat/completions \
 Or from the CLI:
 
 ```bash
-llm3090 status
+lllm3090 status
 ```
 
 :::{note}
@@ -55,7 +55,7 @@ Which suits you is a real question rather than a matter of size:
 ## Free the card
 
 ```bash
-llm3090 stop
+lllm3090 stop
 ```
 
 or press **Stop** in the panel. Do this before gaming, or before anything else

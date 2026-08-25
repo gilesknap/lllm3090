@@ -1,16 +1,25 @@
 #!/usr/bin/env bash
-# llm3090 installer -- Debian 13 and derivatives (Ubuntu 24.04/26.04), RTX 3090.
+# lllm3090 installer -- Debian 13 and derivatives (Ubuntu 24.04/26.04), RTX 3090.
 #
 # Installs into your home directory only. Nothing is written outside $HOME
 # except the apt packages listed below, and no model weights are downloaded --
 # pick those from the panel once it is running.
 set -euo pipefail
 
-PREFIX="${LLM3090_PREFIX:-$HOME/.local/share/llm3090}"
+PREFIX="${LLLM3090_PREFIX:-$HOME/.local/share/lllm3090}"
 VENV="$PREFIX/venv"
 UNIT_DIR="$HOME/.config/systemd/user"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APT_PACKAGES=(python3-venv python3-pip libvulkan1 curl)
+# Only what is genuinely used: python3-venv provides ensurepip (an interpreter
+# that runs is not an interpreter that can build a venv), and libvulkan1 is how
+# the engine reaches the card. The venv brings its own pip; downloads go through
+# Python's urllib. Demanding more than this is not free -- on a desktop, curl
+# alone is a dependency of Steam and half of GNOME.
+APT_PACKAGES=(python3-venv libvulkan1)
+
+# Run privileged steps through sudo, unless we already are root (containers,
+# and anyone who insists). Failing on a missing sudo as root would be absurd.
+if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
 
 say()  { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[33m    %s\033[0m\n' "$*"; }
@@ -49,8 +58,10 @@ for pkg in "${APT_PACKAGES[@]}"; do
 done
 if [ ${#MISSING[@]} -gt 0 ]; then
   say "Installing system packages: ${MISSING[*]}"
-  sudo apt-get update -qq
-  sudo apt-get install -y "${MISSING[@]}"
+  $SUDO apt-get update -qq
+  # Without this, a base image with unconfigured tzdata stops and asks for a
+  # geographic area halfway through the install.
+  $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y "${MISSING[@]}"
 else
   say "System packages already present"
 fi
@@ -65,35 +76,58 @@ say "Creating the virtual environment at $VENV"
 mkdir -p "$PREFIX"
 python3 -m venv "$VENV"
 "$VENV/bin/pip" install --quiet --upgrade pip
-"$VENV/bin/pip" install --quiet "$REPO"
+
+# The version comes from git tags via setuptools_scm. A zip download from GitHub
+# has no .git, and so does a box without git installed -- in both cases the build
+# fails with an error that names neither this project nor the remedy. Supply a
+# fallback rather than let that happen.
+if [ -d "$REPO/.git" ] && command -v git >/dev/null 2>&1; then
+  "$VENV/bin/pip" install --quiet "$REPO"
+else
+  warn "no usable git metadata here (zip download, or git not installed)"
+  warn "installing anyway; 'lllm3090 --version' will report 0.0.0+unknown"
+  SETUPTOOLS_SCM_PRETEND_VERSION_FOR_LLLM3090=0.0.0+unknown \
+    "$VENV/bin/pip" install --quiet "$REPO"
+fi
 
 mkdir -p "$HOME/.local/bin"
-ln -sf "$VENV/bin/llm3090" "$HOME/.local/bin/llm3090"
+ln -sf "$VENV/bin/lllm3090" "$HOME/.local/bin/lllm3090"
 case ":$PATH:" in
   *":$HOME/.local/bin:"*) ;;
-  *) warn "$HOME/.local/bin is not on your PATH; add it to use 'llm3090' directly" ;;
+  *) warn "$HOME/.local/bin is not on your PATH; add it to use 'lllm3090' directly" ;;
 esac
 
 # --- engine ------------------------------------------------------------------
 say "Installing the llama.cpp engine (pinned build, checksum verified)"
-"$VENV/bin/llm3090" install-engine
+"$VENV/bin/lllm3090" install-engine
 
 # --- service -----------------------------------------------------------------
 say "Installing the user service"
 mkdir -p "$UNIT_DIR"
-sed "s|@VENV@|$VENV|g" "$REPO/systemd/llm3090-panel.service" > "$UNIT_DIR/llm3090-panel.service"
-systemctl --user daemon-reload
-systemctl --user enable --now llm3090-panel.service
+sed "s|@VENV@|$VENV|g" "$REPO/systemd/lllm3090-panel.service" > "$UNIT_DIR/lllm3090-panel.service"
 
-# Keep the panel alive when nobody is logged in, so the box can serve headless.
-if ! loginctl show-user "$USER" --property=Linger 2>/dev/null | grep -q 'Linger=yes'; then
-  say "Enabling linger so the panel survives logout"
-  sudo loginctl enable-linger "$USER" || warn "could not enable linger; the panel will stop at logout"
+# systemd is not guaranteed: containers have no init, and not every derivative
+# uses it. The unit file is written either way; only starting it is skipped, and
+# everything else still works.
+if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+  systemctl --user daemon-reload
+  systemctl --user enable --now lllm3090-panel.service
+
+  # Keep the panel alive when nobody is logged in, so the box can serve headless.
+  if ! loginctl show-user "$USER" --property=Linger 2>/dev/null | grep -q 'Linger=yes'; then
+    say "Enabling linger so the panel survives logout"
+    $SUDO loginctl enable-linger "$USER" ||
+      warn "could not enable linger; the panel will stop at logout"
+  fi
+else
+  warn "no systemd user session here, so the panel was not started."
+  warn "The unit is at $UNIT_DIR/lllm3090-panel.service for later; meanwhile run:"
+  warn "    $VENV/bin/lllm3090 panel"
 fi
 
 # --- verify ------------------------------------------------------------------
 say "Verifying"
-"$VENV/bin/llm3090" doctor
+"$VENV/bin/lllm3090" doctor
 
 cat <<'DONE'
 
@@ -101,7 +135,7 @@ Installed.
 
   Panel:   http://127.0.0.1:8080     (loopback only -- tunnel with
                                       ssh -L 8080:127.0.0.1:8080 <host>)
-  CLI:     llm3090 models | start <name> | stop | status | claude
+  CLI:     lllm3090 models | start <name> | stop | status | claude
 
 No model has been downloaded. Open the panel and pick one -- start with
 Qwen3-8B (5 GB) to confirm everything works, then Qwen3.8-27B (15 GB) for

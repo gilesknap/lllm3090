@@ -1,0 +1,30 @@
+on:
+  workflow_call:
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    # The trusted publisher registered on PyPI must name *this* file,
+    # `_pypi.yml`, and this environment, `release` -- not `ci.yml`. PyPI checks
+    # the OIDC `job_workflow_ref` claim, and for a reusable workflow GitHub
+    # fills that in with the file holding the job, not the entry point that
+    # called it. Register the caller instead and every publish fails auth on
+    # the tag. The same applies if either name here changes.
+    environment: release
+
+    steps:
+      # _dist.yml already built and checked this. Building again here would
+      # upload something twine never saw.
+      - name: Download dist artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: dist
+          path: dist
+
+      - name: Publish to PyPI using trusted publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No token and no repository secret: the job's OIDC identity is the
+        # credential, which is what `permissions: id-token: write` on the
+        # calling job provides.
+        with:
+          attestations: false

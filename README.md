@@ -1,4 +1,4 @@
-# llm3090
+# lllm3090
 
 Local LLM serving for a single RTX 3090, with a browser control panel.
 
@@ -12,8 +12,8 @@ Debian 13 or a derivative (Ubuntu 24.04 / 26.04), an RTX 3090, and the NVIDIA
 driver already working:
 
 ```bash
-git clone https://github.com/gilesknap/llm3090
-cd llm3090
+git clone https://github.com/gilesknap/lllm3090
+cd lllm3090
 ./install.sh
 ```
 
@@ -23,14 +23,20 @@ and downloads **no model weights** — you pick those from the panel.
 Then open <http://127.0.0.1:8080>, download `Qwen3-8B` (5 GB) to prove the
 install works, and `Qwen3.8-27B` (15 GB) for real use.
 
+Just the Python package, without the engine or service:
+
+```bash
+pip install lllm3090
+```
+
 ## Use
 
 ```bash
-llm3090 models          # what exists, what fits, what is downloaded
-llm3090 start Qwen3.8-27B
-llm3090 status
-llm3090 claude          # launch Claude Code against the local model
-llm3090 stop            # free the VRAM
+lllm3090 models          # what exists, what fits, what is downloaded
+lllm3090 start Qwen3.8-27B
+lllm3090 status
+lllm3090 claude          # launch Claude Code against the local model
+lllm3090 stop            # free the VRAM
 ```
 
 The engine exposes both the OpenAI API (`/v1/chat/completions`) and Anthropic's
@@ -47,4 +53,4 @@ warns.
 
 ## Documentation
 
-<https://gilesknap.github.io/llm3090>
+<https://gilesknap.github.io/lllm3090>

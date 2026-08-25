@@ -1,4 +1,4 @@
-# llm3090
+# lllm3090
 
 Local LLM serving for a single RTX 3090, with a browser control panel.
 

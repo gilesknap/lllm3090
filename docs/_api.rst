@@ -6,10 +6,10 @@ API reference
    :template: custom-module-template.rst
    :recursive:
 
-   llm3090.config
-   llm3090.catalog
-   llm3090.engine
-   llm3090.downloads
-   llm3090.preflight
-   llm3090.panel
-   llm3090.cli
+   lllm3090.config
+   lllm3090.catalog
+   lllm3090.engine
+   lllm3090.downloads
+   lllm3090.preflight
+   lllm3090.panel
+   lllm3090.cli

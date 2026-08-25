@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['*']
   pull_request:
 
 jobs:
@@ -48,3 +49,15 @@ jobs:
           path: docs/_build/html
       - id: deploy
         uses: actions/deploy-pages@v4
+
+  dist:
+    uses: ./.github/workflows/_dist.yml
+
+  pypi:
+    needs: [test, dist]
+    if: github.ref_type == 'tag'
+    uses: ./.github/workflows/_pypi.yml
+    # The only permission a trusted publish needs: an OIDC token proving to
+    # PyPI that this workflow, in this repository, is who it claims to be.
+    permissions:
+      id-token: write

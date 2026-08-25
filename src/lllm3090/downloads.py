@@ -18,7 +18,7 @@ from pathlib import Path
 from . import config
 
 CHUNK = 4 * 1024 * 1024
-USER_AGENT = "llm3090/0.1 (+https://github.com/gilesknap/llm3090)"
+USER_AGENT = "lllm3090/0.1 (+https://github.com/gilesknap/lllm3090)"
 
 
 @dataclass

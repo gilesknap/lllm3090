@@ -23,7 +23,7 @@ from ._version import __version__
 
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
-app = FastAPI(title="llm3090", version=__version__)
+app = FastAPI(title="lllm3090", version=__version__)
 _busy = asyncio.Lock()
 _last: dict = {"action": None, "ok": None, "detail": ""}
 
@@ -197,4 +197,4 @@ async def logstream():
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return resources.files("llm3090.static").joinpath("index.html").read_text()
+    return resources.files("lllm3090.static").joinpath("index.html").read_text()

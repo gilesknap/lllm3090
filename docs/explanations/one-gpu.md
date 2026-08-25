@@ -25,8 +25,8 @@ own for the arithmetic.
 
 ## What would it take to widen it
 
-Nothing structural. `llm3090.config` holds the envelope as constants and
-`llm3090.catalog.fit` does the arithmetic from them, so supporting another card
+Nothing structural. `lllm3090.config` holds the envelope as constants and
+`lllm3090.catalog.fit` does the arithmetic from them, so supporting another card
 means a second profile and a second set of verified catalogue entries. The work
 is not the code; it is re-verifying every model on real hardware, which needs
 someone who owns one.

@@ -1,4 +1,4 @@
-"""The ``llm3090`` command."""
+"""The ``lllm3090`` command."""
 
 from __future__ import annotations
 
@@ -29,6 +29,22 @@ LLAMA_SHA256 = "c64b6d5820ea6dc3227495e2c30c397fb73c24158291cfb7ef99892a708605a6
 app = typer.Typer(add_completion=False, help=__doc__)
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(__version__)
+        raise typer.Exit()
+
+
+@app.callback()
+def _main(
+    version: bool = typer.Option(
+        False, "--version", callback=_version_callback, is_eager=True,
+        help="Print the version and exit.",
+    ),
+) -> None:
+    """Local LLM serving for a single RTX 3090."""
+
+
 def _echo_check(name: str, ok: bool, message: str) -> None:
     mark = "[ ok ]" if ok else "[FAIL]"
     typer.echo(f"  {mark} {name:<12} {message}")
@@ -37,7 +53,7 @@ def _echo_check(name: str, ok: bool, message: str) -> None:
 @app.command()
 def doctor() -> None:
     """Check this machine can run the stack, and say precisely what is missing."""
-    typer.echo(f"llm3090 {__version__}")
+    typer.echo(f"lllm3090 {__version__}")
     results = preflight.run_all()
     for name, ok, message in results:
         _echo_check(name, ok, message)
@@ -133,7 +149,7 @@ def start(
     """Start the engine on an installed model."""
     entry = next((m for m in catalog.installed() if m["name"] == model), None)
     if entry is None:
-        typer.echo(f"{model!r} is not installed. Try: llm3090 models")
+        typer.echo(f"{model!r} is not installed. Try: lllm3090 models")
         raise typer.Exit(1)
     parallel = parallel or config.DEFAULT_PARALLEL
     if ctx is None:
@@ -164,7 +180,7 @@ def panel(
     import uvicorn
 
     config.STATE_DIR.mkdir(parents=True, exist_ok=True)
-    uvicorn.run("llm3090.panel:app", host="127.0.0.1", port=port, log_level="warning")
+    uvicorn.run("lllm3090.panel:app", host="127.0.0.1", port=port, log_level="warning")
 
 
 @app.command()

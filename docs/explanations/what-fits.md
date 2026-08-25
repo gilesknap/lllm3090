@@ -89,6 +89,6 @@ slots the full 32768 and asks for nothing more. **Surplus VRAM becomes
 concurrency, not wasted context.**
 
 That is the whole calculation the panel performs, in
-`llm3090.catalog.fit` and `llm3090.catalog.plan`. It runs before any download, which is the point: a
+`lllm3090.catalog.fit` and `lllm3090.catalog.plan`. It runs before any download, which is the point: a
 20 GB download is an expensive way to learn something a config file could have
 told you.

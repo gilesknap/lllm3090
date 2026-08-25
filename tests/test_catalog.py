@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from llm3090 import catalog, config
+from lllm3090 import catalog, config
 
 
 def test_every_catalogue_entry_is_well_formed():

@@ -94,7 +94,7 @@ def check_engine() -> tuple[bool, str]:
     if not binary.exists():
         return False, (
             f"llama-server not installed at {binary} "
-            "(run: llm3090 install-engine)"
+            "(run: lllm3090 install-engine)"
         )
     return True, str(binary)
 

@@ -97,7 +97,7 @@ def start(
     binary = server_binary()
     if not binary.exists():
         return False, (
-            f"llama-server not found at {binary}; run 'llm3090 install-engine'"
+            f"llama-server not found at {binary}; run 'lllm3090 install-engine'"
         )
     if not Path(model_path).exists():
         return False, f"model file not found: {model_path}"

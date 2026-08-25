@@ -11,8 +11,8 @@
 ## Install
 
 ```bash
-git clone https://github.com/gilesknap/llm3090
-cd llm3090
+git clone https://github.com/gilesknap/lllm3090
+cd lllm3090
 ./install.sh
 ```
 
@@ -22,7 +22,7 @@ The installer:
    rather than a stack trace if something is missing;
 2. installs four apt packages if absent (`python3-venv`, `python3-pip`,
    `libvulkan1`, `curl`) — the only thing it touches outside `$HOME`;
-3. creates a virtualenv at `~/.local/share/llm3090/venv` and installs the package;
+3. creates a virtualenv at `~/.local/share/lllm3090/venv` and installs the package;
 4. downloads a **pinned** llama.cpp build and verifies its SHA-256;
 5. installs and starts a systemd *user* service for the panel, and enables
    linger so it survives logout.
@@ -33,7 +33,7 @@ depends on what you want to do, and a 15 GB surprise during an install is rude.
 ## Check it worked
 
 ```bash
-llm3090 doctor
+lllm3090 doctor
 ```
 
 ```
@@ -41,7 +41,7 @@ llm3090 doctor
   [ ok ] gpu          NVIDIA GeForce RTX 3090 (24576 MiB, compute 8.6)
   [ ok ] driver       driver 595.84
   [ ok ] vulkan       Vulkan ICD at /usr/share/vulkan/icd.d/nvidia_icd.json
-  [ ok ] engine       ~/.local/share/llm3090/llama.cpp/llama-server
+  [ ok ] engine       ~/.local/share/lllm3090/llama.cpp/llama-server
   [ ok ] models dir   /home/giles/models (766 GB free)
 ```
 
