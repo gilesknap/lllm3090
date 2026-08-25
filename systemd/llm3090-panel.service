@@ -1,0 +1,16 @@
+[Unit]
+Description=llm3090 control panel (local web UI on 127.0.0.1:8080)
+Documentation=https://github.com/gilesknap/llm3090
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@VENV@/bin/llm3090 panel
+Restart=on-failure
+RestartSec=5
+# The engine is deliberately NOT stopped when the panel restarts: it is started
+# with its own session and tracked by a pidfile, so a panel upgrade does not
+# cost a two-minute model reload.
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,115 @@
+# Curated model list for a single RTX 3090 (24 GB, sm_86).
+#
+# Every entry has been checked to exist on HuggingFace and to fit the card with
+# room for a usable context. Figures:
+#
+#   size_gb            download size, from the HuggingFace API
+#   kv_kib_per_token   KV cache cost per token at f16, derived from the config:
+#                      full_attention_layers x 2 (K,V) x kv_heads x head_dim x 2 bytes.
+#                      Linear-attention (GatedDeltaNet) layers cost nothing per
+#                      token; sliding-window layers are counted only where the
+#                      engine provisions them per-token.
+#   max_ctx            the model's own RoPE ceiling -- past it lies incoherence,
+#                      not merely cost, so the panel never offers more.
+#   expected_tok_s     decode rate on this card. verified: true means measured
+#                      here; otherwise it is derived from memory bandwidth over
+#                      bytes-read-per-token and should be treated as ±30%.
+#
+# The panel computes achievable context from size_gb and kv_kib_per_token at
+# run time, so it stays honest if you run headless (~2.4 GiB more to spend).
+
+models:
+  - id: qwen3.8-27b
+    name: Qwen3.8-27B
+    repo: unsloth/Qwen3.8-27B-GGUF
+    file: Qwen3.8-27B-UD-Q4_K_S.gguf
+    size_gb: 15.36
+    kind: dense
+    params: 27B dense (64 layers, 16 full-attention + 48 linear)
+    kv_kib_per_token: 64
+    max_ctx: 262144
+    default_ctx: 131072
+    expected_tok_s: 35
+    verified: true
+    tags: [general, coding, recommended]
+    notes: >-
+      The default. Measured on this card at 35 tok/s decode and 3.5 s warm
+      time-to-first-token. Dense, so every weight is read per token -- it is
+      slower than the MoE entries but stronger per parameter. Cold prefill on a
+      very long prompt is slow under Vulkan (~2 min at 80k); warm turns are fine.
+
+  - id: qwen3.6-35b-a3b
+    name: Qwen3.6-35B-A3B
+    repo: unsloth/Qwen3.6-35B-A3B-GGUF
+    file: Qwen3.6-35B-A3B-UD-IQ4_XS.gguf
+    size_gb: 17.73
+    kind: moe
+    params: 35B total, 3B active (256 experts, 8 per token)
+    kv_kib_per_token: 20
+    max_ctx: 262144
+    default_ctx: 262144
+    expected_tok_s: 90
+    verified: false
+    tags: [general, agentic, long-context]
+    notes: >-
+      Sparse: only 3B parameters are read per token, so it decodes far faster
+      than its size suggests. Its hybrid attention also makes KV unusually cheap
+      (20 KiB/token against the 27B's 64), which is what puts the full 262k
+      context in reach. The best choice for long agentic sessions.
+
+  - id: qwen3.6-35b-a3b-q4ks
+    name: Qwen3.6-35B-A3B-Q4KS
+    repo: unsloth/Qwen3.6-35B-A3B-GGUF
+    file: Qwen3.6-35B-A3B-UD-Q4_K_S.gguf
+    size_gb: 20.89
+    kind: moe
+    params: 35B total, 3B active
+    kv_kib_per_token: 20
+    max_ctx: 262144
+    default_ctx: 131072
+    expected_tok_s: 90
+    verified: false
+    tags: [general, agentic, quality]
+    notes: >-
+      The same model at a higher bit-rate -- K-quants rather than I-quants, about
+      0.4 bits per weight more. Leaves much less room for KV, so you trade
+      context for fidelity. Take this one only if you have measured that the
+      IQ4_XS build is not good enough for your work.
+
+  - id: gpt-oss-20b
+    name: gpt-oss-20b
+    repo: ggml-org/gpt-oss-20b-GGUF
+    file: gpt-oss-20b-MXFP4.gguf
+    size_gb: 12.11
+    kind: moe
+    params: 21B total, 3.6B active
+    kv_kib_per_token: 24
+    max_ctx: 131072
+    default_ctx: 131072
+    expected_tok_s: 80
+    verified: false
+    tags: [general, small, reasoning-effort]
+    notes: >-
+      Native MXFP4 -- this is the format the model was released in, not a
+      re-quantisation, so nothing is lost in conversion. Small enough to leave
+      most of the card free. Exposes a reasoning_effort control that changes
+      output length rather than speed, which is the useful knob for agent work.
+
+  - id: qwen3-8b
+    name: Qwen3-8B
+    repo: unsloth/Qwen3-8B-GGUF
+    file: Qwen3-8B-Q4_K_M.gguf
+    size_gb: 5.03
+    kind: dense
+    params: 8B dense
+    kv_kib_per_token: 144
+    max_ctx: 32768
+    default_ctx: 32768
+    expected_tok_s: 60
+    verified: false
+    tags: [small, smoke-test]
+    notes: >-
+      A 5 GB download for checking the install works end to end before
+      committing to a 15-20 GB one. Note the KV cost per token is the highest
+      here despite the small weights -- 36 full-attention layers with no linear
+      or sliding layers to make them cheap. Size and context are independent.

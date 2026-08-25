@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools_scm[toml]>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm3090"
+description = "Local LLM serving for a single RTX 3090, with a browser control panel"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+dynamic = ["version"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "huggingface-hub>=0.34",
+    "pyyaml",
+    "typer",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "httpx",
+    "ruff",
+    "mypy",
+    "sphinx-autobuild",
+    "sphinx-copybutton",
+    "sphinx-design",
+    "myst-parser",
+    "pydata-sphinx-theme",
+    "types-PyYAML",
+]
+
+[project.scripts]
+llm3090 = "llm3090.cli:main"
+
+[project.urls]
+GitHub = "https://github.com/gilesknap/llm3090"
+Documentation = "https://gilesknap.github.io/llm3090"
+
+[tool.setuptools_scm]
+version_file = "src/llm3090/_version.py"
+
+[tool.ruff]
+src = ["src", "tests"]
+line-length = 88
+
+[tool.ruff.lint]
+extend-select = ["B", "C4", "E", "F", "I", "UP", "W"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.mypy]
+ignore_missing_imports = true
