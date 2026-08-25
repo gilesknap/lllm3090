@@ -35,6 +35,13 @@ Or from the CLI:
 llm3090 status
 ```
 
+:::{note}
+Qwen3-8B is a reasoning model and thinks at length before answering. With a
+small `max_tokens` you may get a `thinking` block and no text at all — that is
+the model spending its budget, not a broken endpoint. Give it a few hundred
+tokens of headroom.
+:::
+
 ## Move to a real model
 
 `Qwen3-8B` is a smoke test. For actual work, download **Qwen3.8-27B** (15 GB) —
