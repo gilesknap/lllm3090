@@ -154,8 +154,8 @@ def start(
         typer.echo(f"{model!r} is not installed. Try: lllm3090 models")
         raise typer.Exit(1)
     parallel = parallel or config.DEFAULT_PARALLEL
+    known = next((m for m in catalog.load_catalog() if m.name == model), None)
     if ctx is None:
-        known = next((m for m in catalog.load_catalog() if m.name == model), None)
         if known is not None:
             p = catalog.plan(known, parallel)
             ctx, parallel = p.pool, p.parallel
@@ -163,7 +163,8 @@ def start(
         else:
             ctx = 32768 * parallel
     engine.stop()
-    ok, detail = engine.start(entry["path"], model, ctx, parallel)
+    template = known.chat_template if known else None
+    ok, detail = engine.start(entry["path"], model, ctx, parallel, 300, template)
     typer.echo(detail)
     raise typer.Exit(0 if ok else 1)
 
@@ -331,7 +332,6 @@ def claude(ctx: typer.Context) -> None:
         os.environ,
         ANTHROPIC_BASE_URL=config.ENGINE_URL,
         ANTHROPIC_AUTH_TOKEN="local",
-        ANTHROPIC_API_KEY="",
         ANTHROPIC_MODEL=model,
         ANTHROPIC_DEFAULT_OPUS_MODEL=model,
         ANTHROPIC_DEFAULT_SONNET_MODEL=model,
@@ -340,6 +340,10 @@ def claude(ctx: typer.Context) -> None:
         CLAUDE_CODE_MAX_CONTEXT_TOKENS=window,
         CLAUDE_CODE_MAX_OUTPUT_TOKENS="32768",
     )
+    # Remove rather than blank it: an empty ANTHROPIC_API_KEY still counts as
+    # set, which makes Claude Code disable its claude.ai connectors and say so
+    # on every launch. The auth token above is what this endpoint uses.
+    env.pop("ANTHROPIC_API_KEY", None)
     if not shutil.which("claude"):
         typer.echo("claude is not on PATH; install Claude Code first.")
         raise typer.Exit(1)

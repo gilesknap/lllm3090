@@ -51,7 +51,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 # Without these the wheel installs the code and none of the content: no model
 # catalogue, no panel UI. The CLI would import and then fail at first use.
-"lllm3090.data" = ["*.yaml", "*.service"]
+"lllm3090.data" = ["*.yaml", "*.service", "*.jinja"]
 "lllm3090.static" = ["*.html"]
 
 [tool.setuptools_scm]

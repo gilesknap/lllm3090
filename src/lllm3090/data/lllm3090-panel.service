@@ -8,9 +8,28 @@ Type=simple
 ExecStart=@BIN@ panel
 Restart=on-failure
 RestartSec=5
-# The engine is deliberately NOT stopped when the panel restarts: it is started
-# with its own session and tracked by a pidfile, so a panel upgrade does not
-# cost a two-minute model reload.
+
+# Kill only the panel process on stop, not everything in the cgroup.
+#
+# The engine is launched by the panel and tracked by a pidfile so that a panel
+# restart -- which systemd does on every upgrade -- does not cost a multi-minute
+# model reload. start_new_session=True escapes the process group but NOT the
+# cgroup, so with the default KillMode=control-group systemd killed the engine
+# anyway, and the next request got "connection refused" with no clue why.
+#
+# The documented downside of KillMode=process
+
+# Nothing in the panel should take long to stop now that starts do not block,
+# but 90s of an unresponsive service while systemd waits is worse than a
+# hard stop.
+TimeoutStopSec=15 is that it can leave processes
+# behind. Here that is the point: `lllm3090 stop` owns the engine's lifetime.
+KillMode=process
+
+# Nothing in the panel should take long to stop now that starts do not block,
+# but 90s of an unresponsive service while systemd waits is worse than a
+# hard stop.
+TimeoutStopSec=15
 
 [Install]
 WantedBy=default.target

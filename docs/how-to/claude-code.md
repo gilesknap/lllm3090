@@ -46,6 +46,25 @@ The honest version: it works, and it is not the same experience.
   for two call sites. The shape of its claims was right; the magnitudes were
   asserted rather than counted.
 
+## A patched chat template
+
+`Qwen3.8-27B` is served with a modified chat template, shipped as
+`lllm3090/data/qwen3.8-27b.jinja`. Its own template counts the system messages
+at the start of a conversation and then raises on any later one:
+
+```jinja
+{{- raise_exception('System message must be at the beginning.') }}
+```
+
+Claude Code legitimately sends a system message mid-conversation, so without the
+patch every request after the first fails with a 500 and a Jinja traceback that
+does not obviously point at the cause. The patch renders that message as an
+ordinary system turn instead of failing. It is a one-line change and the reason
+is written into the template file.
+
+Any catalogue entry can carry a `chat_template:` field; the engine passes
+`--chat-template-file` only for models that declare one.
+
 ## Subagents share one KV pool
 
 The context you configure is a *global* pool shared by every concurrent request,

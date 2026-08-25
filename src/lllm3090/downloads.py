@@ -135,3 +135,26 @@ def cancel(model_id: str) -> bool:
 
 def all_downloads() -> list[dict]:
     return [d.as_dict() for d in _downloads.values()]
+
+
+def resume_interrupted(catalog_entries: list[dict]) -> list[str]:
+    """Restart downloads left half-finished by a panel restart.
+
+    Downloads are threads, so stopping the panel -- which systemd does on every
+    upgrade -- abandons them. The part file survives and the range request
+    resumes from it, but nothing was restarting them, so an interrupted download
+    sat at 83% until someone noticed and pressed the button again.
+
+    Returns the ids resumed, for logging.
+    """
+    resumed = []
+    for entry in catalog_entries:
+        target = config.MODELS_DIR / entry["name"] / entry["file"]
+        if target.exists():
+            continue  # already complete
+        part = target.with_suffix(target.suffix + ".part")
+        if not part.exists() or part.stat().st_size == 0:
+            continue
+        start(entry)
+        resumed.append(entry["id"])
+    return resumed

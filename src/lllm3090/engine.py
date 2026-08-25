@@ -15,6 +15,7 @@ import signal
 import subprocess
 import time
 import urllib.request
+from importlib import resources
 from pathlib import Path
 
 from . import config
@@ -82,9 +83,17 @@ def stop(timeout: int = 40) -> tuple[bool, str]:
 
 
 def start(
-    model_path: str, name: str, ctx: int, parallel: int = 1, wait: int = 300
+    model_path: str,
+    name: str,
+    ctx: int,
+    parallel: int = 1,
+    wait: int = 300,
+    chat_template: str | None = None,
 ) -> tuple[bool, str]:
     """Launch llama-server and block until it answers.
+
+    ``wait`` is how many seconds to poll for readiness; 0 returns as soon as the
+    process is launched.
 
     ``ctx`` is the whole KV pool and ``parallel`` is how many conversations
     share it, so each slot gets ``ctx // parallel`` tokens. Sizing the pool for
@@ -119,6 +128,13 @@ def start(
                 "--cache-type-k", "q8_0",
                 "--cache-type-v", "q8_0",
                 "--jinja",
+                *(
+                    ["--chat-template-file", str(
+                        resources.files("lllm3090.data").joinpath(chat_template)
+                    )]
+                    if chat_template
+                    else []
+                ),
             ],
             stdout=log,
             stderr=subprocess.STDOUT,
@@ -126,6 +142,13 @@ def start(
             start_new_session=True,   # survives a panel restart
         )
     config.ENGINE_PID.write_text(str(proc.pid))
+
+    if wait == 0:
+        # Fire and forget. The panel uses this: holding an HTTP request open for
+        # a multi-minute model load makes the panel unresponsive to everything
+        # else, and makes a systemd stop hang until it is SIGKILLed. Callers
+        # poll status() instead, which already distinguishes loading from ready.
+        return True, f"starting {name} -- {ctx // parallel} tokens x {parallel} slots"
 
     for _ in range(wait):
         if proc.poll() is not None:

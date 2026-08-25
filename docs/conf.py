@@ -38,6 +38,7 @@ nitpick_ignore = [
     ("py:class", "NoneType"),
     ("py:class", "pathlib._local.Path"),
     ("py:class", "typer.models.Context"),
+    ("py:class", "fastapi.applications.FastAPI"),
 ]
 
 autoclass_content = "both"

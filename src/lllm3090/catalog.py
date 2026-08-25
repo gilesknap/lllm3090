@@ -43,6 +43,10 @@ class Model:
     #: merely expensive, so it caps every calculation here.
     max_ctx: int
     expected_tok_s: int | None = None
+    #: Optional replacement chat template shipped in ``lllm3090.data``. Used
+    #: where a model's own template rejects something a client legitimately
+    #: sends; see ``docs/explanations`` and the file's own comment for why.
+    chat_template: str | None = None
     verified: bool = False
     notes: str = ""
     tags: list[str] = field(default_factory=list)
@@ -202,6 +206,7 @@ def catalog_for_panel(desktop: bool = True) -> list[dict[str, Any]]:
                 "notes": m.notes,
                 "tags": m.tags,
                 "expected_tok_s": m.expected_tok_s,
+                "chat_template": m.chat_template,
                 "fits": f.fits,
                 "max_ctx": p.per_session,
                 "parallel": p.parallel,

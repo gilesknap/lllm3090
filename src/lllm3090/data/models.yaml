@@ -29,6 +29,7 @@ models:
     kv_kib_per_token: 64
     max_ctx: 262144
     expected_tok_s: 35
+    chat_template: qwen3.8-27b.jinja
     verified: true
     tags: [general, coding, recommended]
     notes: >-

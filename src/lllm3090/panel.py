@@ -13,6 +13,7 @@ import json
 import re
 import shutil
 import subprocess
+from contextlib import asynccontextmanager
 from importlib import resources
 
 from fastapi import FastAPI
@@ -23,7 +24,19 @@ from ._version import __version__
 
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
-app = FastAPI(title="lllm3090", version=__version__)
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Pick up anything a previous panel process left half-downloaded."""
+    try:
+        resumed = downloads.resume_interrupted(catalog.catalog_for_panel())
+        if resumed:
+            print(f"resuming interrupted downloads: {', '.join(resumed)}", flush=True)
+    except Exception as e:
+        print(f"could not check for interrupted downloads: {e}", flush=True)
+    yield
+
+
+app = FastAPI(title="lllm3090", version=__version__, lifespan=lifespan)
 _busy = asyncio.Lock()
 _last: dict = {"action": None, "ok": None, "detail": ""}
 
@@ -88,8 +101,11 @@ async def start(model: str, ctx: int | None = None, parallel: int | None = None)
 
     async with _busy:
         await asyncio.to_thread(engine.stop)
+        # wait=0: launch and return. A load takes minutes; blocking here would
+        # freeze the panel and hang systemd's stop until it SIGKILLs us.
         ok, detail = await asyncio.to_thread(
-            engine.start, entry["path"], model, ctx, parallel
+            engine.start, entry["path"], model, ctx, parallel, 0,
+            known.chat_template if known else None,
         )
         _last.update(action=f"start {model}", ok=ok, detail=detail[-400:])
     return {"ok": ok, "detail": _last["detail"]}
