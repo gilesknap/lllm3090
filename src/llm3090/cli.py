@@ -99,7 +99,9 @@ def models() -> None:
         speed = f"~{row['expected_tok_s']} tok/s" if row["expected_tok_s"] else "-"
         if row["verified"]:
             speed += " (measured)"
-        ctx = f"{row['max_ctx'] // 1024}k" if row["fits"] else "-"
+        ctx = (
+            f"{row['max_ctx'] // 1024}k x{row['parallel']}" if row["fits"] else "-"
+        )
         typer.echo(
             f"{row['name']:<24}{row['gb']:>7.1f}G{row['kind']:>7}{ctx:>12}  "
             f"{state:<12}{speed}"
@@ -123,18 +125,27 @@ def status() -> None:
 @app.command()
 def start(
     model: str = typer.Argument(..., help="Directory name under the models dir."),
-    ctx: int = typer.Option(None, help="Context window; defaults to the catalogue."),
+    ctx: int = typer.Option(None, help="Total KV pool. Default: computed to fit."),
+    parallel: int = typer.Option(
+        None, help="Conversations sharing the pool. Default: 2, for subagents."
+    ),
 ) -> None:
     """Start the engine on an installed model."""
     entry = next((m for m in catalog.installed() if m["name"] == model), None)
     if entry is None:
         typer.echo(f"{model!r} is not installed. Try: llm3090 models")
         raise typer.Exit(1)
+    parallel = parallel or config.DEFAULT_PARALLEL
     if ctx is None:
         known = next((m for m in catalog.load_catalog() if m.name == model), None)
-        ctx = known.default_ctx if known else 32768
+        if known is not None:
+            p = catalog.plan(known, parallel)
+            ctx, parallel = p.pool, p.parallel
+            typer.echo(f"Context plan: {p.summary}")
+        else:
+            ctx = 32768 * parallel
     engine.stop()
-    ok, detail = engine.start(entry["path"], model, ctx)
+    ok, detail = engine.start(entry["path"], model, ctx, parallel)
     typer.echo(detail)
     raise typer.Exit(0 if ok else 1)
 
@@ -170,7 +181,10 @@ def claude(ctx: typer.Context) -> None:
         raise typer.Exit(1)
     model = state["model"] or "local"
     known = next((m for m in catalog.load_catalog() if m.name == model), None)
-    window = str(known.default_ctx if known else 32768)
+    # Claude Code must be told the PER-CONVERSATION window, not the pool. Tell it
+    # the pool and it will happily fill the whole thing, leaving nothing for the
+    # subagents that share it.
+    window = str(catalog.plan(known).per_session if known else 32768)
     typer.echo(f"Claude Code -> {model} @ {config.ENGINE_URL} (context {window})")
     env = dict(
         os.environ,

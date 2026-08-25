@@ -28,7 +28,6 @@ models:
     params: 27B dense (64 layers, 16 full-attention + 48 linear)
     kv_kib_per_token: 64
     max_ctx: 262144
-    default_ctx: 131072
     expected_tok_s: 35
     verified: true
     tags: [general, coding, recommended]
@@ -47,7 +46,6 @@ models:
     params: 35B total, 3B active (256 experts, 8 per token)
     kv_kib_per_token: 20
     max_ctx: 262144
-    default_ctx: 262144
     expected_tok_s: 90
     verified: false
     tags: [general, agentic, long-context]
@@ -66,7 +64,6 @@ models:
     params: 35B total, 3B active
     kv_kib_per_token: 20
     max_ctx: 262144
-    default_ctx: 131072
     expected_tok_s: 90
     verified: false
     tags: [general, agentic, quality]
@@ -85,7 +82,6 @@ models:
     params: 21B total, 3.6B active
     kv_kib_per_token: 24
     max_ctx: 131072
-    default_ctx: 131072
     expected_tok_s: 80
     verified: false
     tags: [general, small, reasoning-effort]
@@ -104,7 +100,6 @@ models:
     params: 8B dense
     kv_kib_per_token: 144
     max_ctx: 32768
-    default_ctx: 32768
     expected_tok_s: 60
     verified: false
     tags: [small, smoke-test]

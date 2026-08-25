@@ -81,10 +81,17 @@ def stop(timeout: int = 40) -> tuple[bool, str]:
     return True, f"killed engine (pid {target})"
 
 
-def start(model_path: str, name: str, ctx: int, wait: int = 300) -> tuple[bool, str]:
+def start(
+    model_path: str, name: str, ctx: int, parallel: int = 1, wait: int = 300
+) -> tuple[bool, str]:
     """Launch llama-server and block until it answers.
 
-    The KV cache is quantised to ``q8_0``, which halves its cost per token for
+    ``ctx`` is the whole KV pool and ``parallel`` is how many conversations
+    share it, so each slot gets ``ctx // parallel`` tokens. Sizing the pool for
+    one conversation is what makes an agent's subagents queue behind their
+    parent, so the default is two.
+
+    The cache is quantised to ``q8_0``, which halves its cost per token for
     close to no quality loss and is what makes long context affordable on 24 GB.
     """
     binary = server_binary()
@@ -107,6 +114,7 @@ def start(model_path: str, name: str, ctx: int, wait: int = 300) -> tuple[bool, 
                 "--port", str(config.ENGINE_PORT),
                 "--n-gpu-layers", "999",
                 "--ctx-size", str(ctx),
+                "--parallel", str(parallel),
                 "-fa", "on",
                 "--cache-type-k", "q8_0",
                 "--cache-type-v", "q8_0",
@@ -127,7 +135,11 @@ def start(model_path: str, name: str, ctx: int, wait: int = 300) -> tuple[bool, 
                 tail = config.ENGINE_LOG.read_text(errors="replace")[-400:]
             return False, f"engine exited with {proc.returncode}: {tail}"
         if healthy():
-            return True, f"engine ready: {name} @ {ctx} context"
+            per = ctx // parallel
+            return True, (
+                f"engine ready: {name} -- {per} tokens x {parallel} slots "
+                f"(pool {ctx})"
+            )
         time.sleep(1)
     return False, "engine did not become ready in time"
 

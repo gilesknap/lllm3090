@@ -65,7 +65,30 @@ value caches, which halves the per-token cost for close to no quality loss and
 is what makes 200k context on a 15 GB model possible at all. `q4_0` would halve
 it again but degrades long-context reasoning noticeably, so it is not offered.
 
+(concurrency)=
+## One pool, several conversations
+
+The cache is a **single pool shared by every concurrent request**, not a
+per-conversation budget. That distinction is invisible until something spawns a
+subagent, and then it is expensive.
+
+With a pool sized for exactly one session, a parent holding most of it leaves
+nowhere to admit a second. The scheduler serialises them, and worse, the
+subagent's prefill evicts the parent's cached prefix — so the parent's next turn
+pays a full cold prefill instead of a warm hit. Measured on an earlier version
+of this stack, that took p95 latency to 73 s.
+
+So the pool is sized for `parallel` conversations, two by default, and each slot
+gets the pool divided by that — capped at the model's RoPE ceiling, because
+context past it is incoherent rather than merely expensive.
+
+The cap is why small models are not short-changed. Qwen3-8B could hold 232k
+tokens of cache in the VRAM it leaves spare, but its architecture stops at
+32768. Rather than request a pool it cannot use, the planner gives each of two
+slots the full 32768 and asks for nothing more. **Surplus VRAM becomes
+concurrency, not wasted context.**
+
 That is the whole calculation the panel performs, in
-`llm3090.catalog.fit`. It runs before any download, which is the point: a
+`llm3090.catalog.fit` and `llm3090.catalog.plan`. It runs before any download, which is the point: a
 20 GB download is an expensive way to learn something a config file could have
 told you.

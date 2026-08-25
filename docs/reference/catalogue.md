@@ -15,7 +15,6 @@ to exist on HuggingFace and to fit a 24 GB card with usable context left.
 | `params` | Human description of the architecture |
 | `kv_kib_per_token` | KV cache cost per token at f16 |
 | `max_ctx` | The model's own RoPE ceiling; never exceeded |
-| `default_ctx` | What `start` uses when not told otherwise |
 | `expected_tok_s` | Decode rate on this card |
 | `verified` | `true` = measured here; `false` = derived, treat as ±30% |
 | `notes` | What the model is good and bad at |
@@ -46,13 +45,19 @@ gives an answer several times wrong. Check for them.
 
 ## Current entries
 
-| model | size | kind | KiB/token | context | speed |
+| model | size | kind | KiB/token | per conversation | speed |
 |---|---|---|---|---|---|
-| Qwen3.8-27B | 15.4 GB | dense | 64 | ~203k | 35 tok/s (measured) |
-| Qwen3.6-35B-A3B | 17.7 GB | moe | 20 | 262k | ~90 tok/s |
-| Qwen3.6-35B-A3B-Q4KS | 20.9 GB | moe | 20 | ~122k | ~90 tok/s |
-| gpt-oss-20b | 12.1 GB | moe | 24 | 131k | ~80 tok/s |
-| Qwen3-8B | 5.0 GB | dense | 144 | 32k | ~60 tok/s |
+| Qwen3.8-27B | 15.4 GB | dense | 64 | 101k × 2 | 35 tok/s (measured) |
+| Qwen3.6-35B-A3B | 17.7 GB | moe | 20 | 212k × 2 | ~90 tok/s |
+| Qwen3.6-35B-A3B-Q4KS | 20.9 GB | moe | 20 | 61k × 2 | ~90 tok/s |
+| gpt-oss-20b | 12.1 GB | moe | 24 | 128k × 2 | ~80 tok/s |
+| Qwen3-8B | 5.0 GB | dense | 144 | 32k × 2 | ~60 tok/s |
 
-Context figures are computed at run time for a q8 KV cache with a desktop
-session running; a headless box gets more.
+"× 2" is the slot count: the cache is a pool shared by concurrent
+conversations, and the default leaves room for two. See
+[](../explanations/what-fits.md).
+
+Nothing here is stored as a default. `llm3090.catalog.plan` computes it at run
+time from `size_gb`, `kv_kib_per_token` and `max_ctx`, so the figures stay true
+if you run headless or ask for a different slot count. Storing a context default
+would eventually disagree with what fits — and did, in an early version.

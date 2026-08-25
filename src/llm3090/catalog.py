@@ -42,7 +42,6 @@ class Model:
     #: The model's own RoPE ceiling. Context beyond this is incoherent, not
     #: merely expensive, so it caps every calculation here.
     max_ctx: int
-    default_ctx: int
     expected_tok_s: int | None = None
     verified: bool = False
     notes: str = ""
@@ -55,18 +54,40 @@ class Model:
 
 @dataclass(frozen=True)
 class Fit:
-    """Whether a model fits, and what context it leaves room for."""
+    """Whether a model fits, and how many tokens of cache it leaves room for.
+
+    ``pool_*`` are total tokens across all concurrent conversations, bounded by
+    VRAM alone. A single conversation is additionally bounded by the model's
+    RoPE ceiling -- see :func:`plan`.
+    """
 
     fits: bool
-    max_ctx_f16: int
-    max_ctx_q8: int
+    pool_f16: int
+    pool_q8: int
     spare_mib: int
 
     @property
     def headline(self) -> str:
         if not self.fits:
             return "does not fit"
-        return f"up to {self.max_ctx_q8 // 1024}k context"
+        return f"{self.pool_q8 // 1024}k tokens of cache"
+
+
+@dataclass(frozen=True)
+class Plan:
+    """How to actually start a model: pool size, slots, and what each gets."""
+
+    pool: int
+    parallel: int
+    per_session: int
+    capped_by: str  # "vram" | "rope"
+
+    @property
+    def summary(self) -> str:
+        return (
+            f"{self.per_session // 1024}k x {self.parallel} "
+            f"(pool {self.pool // 1024}k, limited by {self.capped_by})"
+        )
 
 
 def fit(model: Model, desktop: bool = True) -> Fit:
@@ -83,17 +104,46 @@ def fit(model: Model, desktop: bool = True) -> Fit:
         return Fit(False, 0, 0, int(spare))
 
     def ctx_for(kib_per_token: float) -> int:
+        # Total tokens VRAM can hold, rounded down to whole 1024-token pages.
+        # Deliberately NOT clamped to the RoPE ceiling: that bounds one
+        # conversation, while this is the pool they all share. plan() applies it.
         tokens = spare * 1024 / kib_per_token
-        # Round down to a whole number of 1024-token pages, then clamp to the
-        # architecture's ceiling.
-        return int(min(math.floor(tokens / 1024) * 1024, model.max_ctx))
+        return int(math.floor(tokens / 1024) * 1024)
 
     return Fit(
         fits=True,
-        max_ctx_f16=ctx_for(model.kv_kib_per_token),
-        max_ctx_q8=ctx_for(model.kv_kib_per_token / 2),
+        pool_f16=ctx_for(model.kv_kib_per_token),
+        pool_q8=ctx_for(model.kv_kib_per_token / 2),
         spare_mib=int(spare),
     )
+
+
+def plan(model: Model, parallel: int | None = None, desktop: bool = True) -> Plan:
+    """Decide the pool size and per-conversation window for a model.
+
+    Two limits apply and they are not the same limit:
+
+    * **VRAM** bounds the whole pool, shared across concurrent conversations.
+    * **RoPE** bounds one conversation. Past the model's ceiling, output becomes
+      incoherent rather than merely expensive, so extra pool beyond
+      ``parallel x max_ctx`` buys nothing and is not requested.
+
+    Spare capacity therefore goes to concurrency rather than to a window the
+    model cannot use -- which is what leaves room for an agent's subagents.
+    """
+    parallel = parallel or config.DEFAULT_PARALLEL
+    f = fit(model, desktop)
+    if not f.fits:
+        return Plan(0, parallel, 0, "vram")
+
+    share = f.pool_q8 // parallel
+    if share >= model.max_ctx:
+        # Enough for everyone; each conversation gets the architecture's maximum
+        # and any leftover VRAM simply is not requested.
+        return Plan(model.max_ctx * parallel, parallel, model.max_ctx, "rope")
+    # Round the per-session window down to whole pages so the pool divides evenly.
+    share = max(1024, (share // 1024) * 1024)
+    return Plan(share * parallel, parallel, share, "vram")
 
 
 def load_catalog() -> list[Model]:
@@ -132,6 +182,7 @@ def catalog_for_panel(desktop: bool = True) -> list[dict[str, Any]]:
     rows = []
     for m in load_catalog():
         f = fit(m, desktop)
+        p = plan(m, desktop=desktop)
         rows.append(
             {
                 "id": m.id,
@@ -145,10 +196,12 @@ def catalog_for_panel(desktop: bool = True) -> list[dict[str, Any]]:
                 "notes": m.notes,
                 "tags": m.tags,
                 "expected_tok_s": m.expected_tok_s,
-                "default_ctx": m.default_ctx,
                 "fits": f.fits,
-                "max_ctx": f.max_ctx_q8,
-                "headline": f.headline,
+                "max_ctx": p.per_session,
+                "parallel": p.parallel,
+                "pool": p.pool,
+                "plan": p.summary,
+                "headline": p.summary,
                 "installed": m.name in have,
             }
         )

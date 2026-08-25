@@ -54,6 +54,11 @@ carrying its own 40k system prompt will not both fit in a 131k pool: the
 scheduler serialises them, and the subagent's prefill can evict the parent's
 cached prefix so the parent then pays a full cold prefill.
 
-If you use subagents, prefer a model whose KV is cheap — see the
-`kv_kib_per_token` column in [](../reference/catalogue.md) — and give it the
-largest context that still fits.
+`llm3090` handles this for you: the engine is started with two slots by
+default and `llm3090 claude` reports the **per-conversation** window to Claude
+Code, not the pool. Tell Claude Code the pool size and it will fill the whole
+thing, which is precisely the failure above.
+
+If you want more concurrent agents, `llm3090 start <model> --parallel 4` — at
+the cost of a quarter of the pool each. Models whose KV is cheap take this far
+better; see the `kv_kib_per_token` column in [](../reference/catalogue.md).

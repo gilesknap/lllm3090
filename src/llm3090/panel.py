@@ -67,22 +67,30 @@ def status():
 
 
 @app.post("/api/start")
-async def start(model: str, ctx: int | None = None):
+async def start(model: str, ctx: int | None = None, parallel: int | None = None):
     entry = next((m for m in catalog.installed() if m["name"] == model), None)
     if entry is None:
         return JSONResponse({"error": f"{model!r} is not installed"}, status_code=400)
     if _busy.locked():
         return JSONResponse({"error": "busy"}, status_code=409)
 
-    # Prefer the catalogue's default context for a known model; fall back to a
-    # conservative value for a GGUF the user dropped in themselves.
+    # Size the pool from what actually fits rather than from a stored default,
+    # and leave room for the concurrent conversations an agent needs.
+    parallel = parallel or config.DEFAULT_PARALLEL
+    known = next((m for m in catalog.load_catalog() if m.name == model), None)
     if ctx is None:
-        known = next((m for m in catalog.load_catalog() if m.name == model), None)
-        ctx = known.default_ctx if known else 32768
+        if known is not None:
+            p = catalog.plan(known, parallel)
+            ctx, parallel = p.pool, p.parallel
+        else:
+            # An unknown GGUF: no KV figure to plan with, so be conservative.
+            ctx = 32768 * parallel
 
     async with _busy:
         await asyncio.to_thread(engine.stop)
-        ok, detail = await asyncio.to_thread(engine.start, entry["path"], model, ctx)
+        ok, detail = await asyncio.to_thread(
+            engine.start, entry["path"], model, ctx, parallel
+        )
         _last.update(action=f"start {model}", ok=ok, detail=detail[-400:])
     return {"ok": ok, "detail": _last["detail"]}
 

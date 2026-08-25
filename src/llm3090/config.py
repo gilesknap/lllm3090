@@ -49,6 +49,17 @@ DESKTOP_RESERVE_MIB = 2400
 #: Compute buffers, CUDA/Vulkan graphs and fragmentation headroom.
 WORKSPACE_RESERVE_MIB = 1024
 
+#: How many conversations must fit at once.
+#:
+#: The KV cache is a single pool shared by every concurrent request, not a
+#: per-conversation budget. An agent that spawns subagents therefore needs room
+#: for more than one: with a pool sized for exactly one session, a parent
+#: holding most of it leaves nowhere to admit a subagent, so the scheduler
+#: serialises them -- and the subagent's prefill evicts the parent's cached
+#: prefix, so the parent then pays a full cold prefill on its next turn.
+#: Two is the minimum that keeps a parent and one subagent resident together.
+DEFAULT_PARALLEL = 2
+
 
 def usable_vram_mib(desktop: bool = True) -> int:
     """VRAM available for weights plus KV cache.
