@@ -11,6 +11,7 @@ lllm3090 <command> [options]
 | `models` | The catalogue: size, kind, achievable context, state, expected speed |
 | `start <name> [--ctx N] [--parallel N]` | Stop any running engine and start this model |
 | `stop` | Terminate the engine and wait for the VRAM to be released |
+| `bench <name>` | Benchmark a model and print a profile block to contribute |
 | `status` | Whether the engine is running, on what, and whether it answers yet |
 | `panel [--port N]` | Run the control panel in the foreground |
 | `claude [args…]` | Launch Claude Code against the local engine |

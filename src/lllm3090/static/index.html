@@ -74,7 +74,7 @@
 <div class="wrap">
   <div>
     <h1>lllm3090</h1>
-    <p class="sub" id="sub">local models on one RTX 3090</p>
+    <p class="sub" id="sub">local models on one GPU</p>
   </div>
 
   <div class="card">
@@ -98,7 +98,7 @@
 
   <div class="card">
     <strong>Available to download</strong>
-    <p class="note">Sized for this card. Context figures assume a q8 KV cache.</p>
+    <p class="note" id="catnote">Sized for this card. Context figures assume a q8 KV cache.</p>
     <div class="cat" id="catalog"></div>
   </div>
 
@@ -118,7 +118,8 @@ async function refresh(){
   try { s = await (await fetch('/api/status')).json(); }
   catch { $('eng').textContent = 'panel unreachable'; return; }
 
-  $('sub').textContent = 'local models on one RTX 3090 · v' + s.version;
+  $('sub').textContent = (s.card ? s.card.name + ' · ' + s.card.vram_gb + ' GB' : 'local models')
+                       + ' · v' + s.version;
   const e = s.engine;
   $('eng').innerHTML = e.running
     ? (e.answering ? '<span class="pill p-ok">running</span>'
@@ -154,6 +155,11 @@ async function refresh(){
   // Catalogue: built once, then only the mutable parts are updated. Rewriting
   // innerHTML on every poll would close any <details> the reader had opened,
   // which is maddening while watching a download.
+  if (s.card && !s.card.measured){
+    $('catnote').innerHTML = 'Context is computed for your card. Speeds were measured on a '
+      + s.card.reference + ' and are shown for reference only — '
+      + '<code>lllm3090 bench</code> contributes real ones.';
+  }
   const dls = Object.fromEntries(s.downloads.map(d => [d.id, d]));
   if (!$('catalog').dataset.built){
     $('catalog').innerHTML = s.catalog.map(c => `
@@ -161,7 +167,7 @@ async function refresh(){
         <div class="chead">
           <span class="nm">${c.name}</span>
           <span class="tag">${c.kind}</span>
-          <span class="meta">${c.gb} GB · ${fmtCtx(c.max_ctx)} × ${c.parallel} · ~${c.expected_tok_s} tok/s${c.verified?' (measured)':''}</span>
+          <span class="meta">${c.gb} GB · ${fmtCtx(c.max_ctx)} × ${c.parallel} · ~${c.expected_tok_s} tok/s${c.verified ? (c.speed_applies ? ' (measured)' : ' (other card)') : ''}</span>
           <span class="cact" id="a-${c.id}"></span>
         </div>
         <div class="bar" id="b-${c.id}" style="display:none"><i></i></div>

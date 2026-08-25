@@ -29,25 +29,29 @@ ENGINE_LOG = STATE_DIR / "engine.log"
 ENGINE_PID = STATE_DIR / "engine.pid"
 
 # ---------------------------------------------------------------------------
-# Hardware envelope
+# Hardware
 # ---------------------------------------------------------------------------
-# This project is deliberately scoped to one card. Every figure in models.yaml
-# is sized against it, so serving a different GPU would silently invalidate the
-# whole catalogue rather than merely perform differently.
+# Capacity and compute capability come from a profile (see hardware.py), not
+# from constants here: the same catalogue has to tell the truth on a 16 GB card
+# as on a 24 GB one. What stays here is what is card-independent.
 
-#: Compute capability this project supports (Ampere GA102).
-TARGET_COMPUTE_CAPABILITY = "8.6"
-#: Total board memory, MiB, as nvidia-smi reports it for a 24 GB card.
-TARGET_VRAM_MIB = 24576
+#: The profile whose card the catalogue's speeds were measured on.
+REFERENCE_PROFILE = "rtx-3090"
+
 #: Minimum driver that carries a working Vulkan ICD for this stack.
 MIN_DRIVER_VERSION = 550
 
-#: VRAM held by a typical desktop session (compositor, browser). Subtracted
-#: from the budget so the catalogue's "will it fit" answers are honest for a
-#: machine someone is also sitting at.
+#: VRAM held by a typical desktop session (compositor, browser). Subtracted so
+#: "will it fit" is honest for a machine someone is also sitting at.
 DESKTOP_RESERVE_MIB = 2400
 #: Compute buffers, CUDA/Vulkan graphs and fragmentation headroom.
 WORKSPACE_RESERVE_MIB = 1024
+
+#: Tokens an agent harness spends on system prompt and tool definitions before
+#: any of your work, every turn. Claude Code sits around 40k. A model whose
+#: per-conversation window is below this cannot run it at all -- the first
+#: message fails -- and a window only slightly above it leaves no room to work.
+AGENT_PROMPT_FLOOR = 40_000
 
 #: How many conversations must fit at once.
 #:
@@ -60,12 +64,6 @@ WORKSPACE_RESERVE_MIB = 1024
 #: Two is the minimum that keeps a parent and one subagent resident together.
 DEFAULT_PARALLEL = 2
 
-#: Tokens an agent harness spends on system prompt and tool definitions before
-#: any of your work, every turn. Claude Code sits around 40k. A model whose
-#: per-conversation window is below this cannot run it at all -- the first
-#: message fails -- and a window only slightly above it leaves no room to work.
-AGENT_PROMPT_FLOOR = 40_000
-
 #: Ceiling on slots handed out automatically.
 #:
 #: A model that reaches its RoPE ceiling before it exhausts VRAM can have extra
@@ -74,16 +72,3 @@ AGENT_PROMPT_FLOOR = 40_000
 #: value of a fifth concurrent conversation is speculative on a single-GPU box,
 #: so the automatic grant stops here. Ask for more explicitly if you want it.
 MAX_AUTO_PARALLEL = 4
-
-
-def usable_vram_mib(desktop: bool = True) -> int:
-    """VRAM available for weights plus KV cache.
-
-    Args:
-        desktop: subtract a desktop session's allocation. False for a headless
-            box, which buys roughly 2.4 GiB and a meaningful slice of context.
-    """
-    budget = TARGET_VRAM_MIB - WORKSPACE_RESERVE_MIB
-    if desktop:
-        budget -= DESKTOP_RESERVE_MIB
-    return budget

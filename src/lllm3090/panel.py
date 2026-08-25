@@ -19,7 +19,7 @@ from importlib import resources
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
-from . import catalog, config, downloads, engine
+from . import catalog, config, downloads, engine, hardware
 from ._version import __version__
 
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -66,8 +66,15 @@ def vram() -> dict | None:
 
 @app.get("/api/status")
 def status():
+    profile = hardware.detect()
     return {
         "version": __version__,
+        "card": {
+            "name": profile.name,
+            "vram_gb": round(profile.vram_mib / 1024),
+            "measured": profile.measured,
+            "reference": hardware.reference().name,
+        },
         "engine": engine.status(),
         "vram": vram(),
         "busy": _busy.locked(),
