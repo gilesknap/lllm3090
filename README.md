@@ -12,36 +12,22 @@ Debian 13 or a derivative (Ubuntu 24.04 / 26.04), an RTX 3090, and the NVIDIA
 driver already working:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gilesknap/lllm3090/main/install.sh | bash
+# uv, if you do not have it: https://docs.astral.sh/uv/getting-started/installation/
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+uv tool install lllm3090
+lllm3090 setup
 ```
 
-Or, if you would rather read it first — which is the sensible thing to do with
-anything you pipe into a shell:
+`setup` checks the hardware, installs the one apt package the engine needs,
+fetches a pinned llama.cpp build and starts the panel as a user service. It is
+safe to re-run and skips whatever is already done.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/gilesknap/lllm3090/main/install.sh -o install.sh
-less install.sh
-bash install.sh
-```
-
-Cloning works too, and is what you want if you intend to change anything:
-
-```bash
-git clone https://github.com/gilesknap/lllm3090
-cd lllm3090 && ./install.sh
-```
-
-The installer touches nothing outside `$HOME` except a handful of apt packages,
-and downloads **no model weights** — you pick those from the panel.
+It touches nothing outside `$HOME` except `libvulkan1`, and downloads **no model
+weights** — you pick those from the panel.
 
 Then open <http://127.0.0.1:8080>, download `Qwen3-8B` (5 GB) to prove the
 install works, and `Qwen3.8-27B` (15 GB) for real use.
-
-Just the Python package, without the engine or service:
-
-```bash
-pip install lllm3090
-```
 
 ## Use
 
@@ -68,3 +54,12 @@ warns.
 ## Documentation
 
 <https://gilesknap.github.io/lllm3090>
+
+## The panel
+
+![The lllm3090 control panel](docs/images/panel.jpg)
+
+Engine state and VRAM at the top, the models you have with start/stop, the
+curated list with what fits this card and what it will do, and the engine log
+streaming underneath. Downloads run in the background with progress, and resume
+from a part file if interrupted.

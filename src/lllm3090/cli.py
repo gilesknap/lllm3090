@@ -174,6 +174,89 @@ def stop() -> None:
     typer.echo(engine.stop()[1])
 
 
+APT_PACKAGES = ["libvulkan1"]
+
+
+def _apt_missing() -> list[str]:
+    missing = []
+    for pkg in APT_PACKAGES:
+        result = subprocess.run(
+            ["dpkg", "-s", pkg], capture_output=True, text=True, check=False
+        )
+        if result.returncode != 0:
+            missing.append(pkg)
+    return missing
+
+
+@app.command()
+def setup(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Do not prompt."),
+    service: bool = typer.Option(True, help="Install and start the user service."),
+) -> None:
+    """Prepare this machine: system packages, engine, and the panel service.
+
+    Everything ``uv tool install`` cannot do for itself. Safe to re-run -- each
+    step is skipped when it is already done.
+    """
+    typer.echo(f"lllm3090 {__version__}\n")
+
+    # 1. Hardware first: nothing else is worth doing on the wrong card.
+    for name, check in (("os", preflight.check_os), ("gpu", preflight.check_gpu),
+                        ("driver", preflight.check_driver)):
+        ok, message = check()
+        _echo_check(name, ok, message)
+        if ok:
+            continue
+        if name == "gpu" and not yes:
+            typer.echo(
+                "\nEvery size and speed figure in the model catalogue was measured or\n"
+                "derived for a 24 GB Ampere card. On other hardware the software runs\n"
+                "and the numbers are wrong."
+            )
+            if not typer.confirm("Continue anyway?", default=False):
+                raise typer.Exit(1)
+        else:
+            raise typer.Exit(1)
+
+    # 2. System packages. Only what the engine actually needs -- uv brings its
+    #    own Python, so there is no python3-venv to install.
+    missing = _apt_missing()
+    if missing:
+        typer.echo(f"\nNeeds apt packages: {' '.join(missing)}")
+        if not yes and not typer.confirm("Install them with sudo?", default=True):
+            raise typer.Exit(1)
+        sudo = [] if os.geteuid() == 0 else ["sudo"]
+        env = dict(os.environ, DEBIAN_FRONTEND="noninteractive")
+        subprocess.run([*sudo, "apt-get", "update", "-qq"], check=True, env=env)
+        subprocess.run(
+            [*sudo, "apt-get", "install", "-y", *missing], check=True, env=env
+        )
+
+    ok, message = preflight.check_vulkan()
+    _echo_check("vulkan", ok, message)
+    if not ok:
+        raise typer.Exit(1)
+
+    # 3. The engine.
+    typer.echo("")
+    install_engine(force=False)
+
+    # 4. The panel.
+    if service:
+        typer.echo("")
+        install_service(enable=True)
+
+    typer.echo("\nReady. Open http://127.0.0.1:8080")
+    if catalog.installed():
+        typer.echo("Models already present: " + ", ".join(
+            m["name"] for m in catalog.installed()
+        ))
+    else:
+        typer.echo("Nothing has been downloaded yet -- choose a model in the panel.")
+        typer.echo("Qwen3-8B (5 GB) confirms it works; Qwen3.8-27B (15 GB) is the")
+        typer.echo("one to keep.")
+
+
 @app.command("install-service")
 def install_service(
     enable: bool = typer.Option(True, help="Enable and start it once written."),

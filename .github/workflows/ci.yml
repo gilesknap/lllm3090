@@ -23,7 +23,6 @@ jobs:
       - run: ruff check src tests
       - run: pytest -q
       - run: sphinx-build -W -b html docs docs/_build/html
-      - run: bash -n install.sh
 
   docs:
     needs: test

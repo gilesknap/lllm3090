@@ -44,12 +44,14 @@ Environments. It needs no secrets; naming it is what lets the claim match.
 
 ## Installing a release
 
-Once published, the package alone is a `pip install`:
+Once published:
 
 ```bash
-pip install lllm3090
+uv tool install lllm3090        # or: uv tool upgrade lllm3090
+lllm3090 setup
 ```
 
-That gets the CLI and panel but not the engine or the service. `install.sh`
-remains the path for a working system — it also fetches the pinned llama.cpp
-build and installs the user unit.
+`uv tool install` gets the CLI and panel; `setup` adds the engine and the
+service. Re-running `setup` after an upgrade is harmless and picks up anything
+new — a changed engine pin, for instance, needs `lllm3090 install-engine
+--force`.
