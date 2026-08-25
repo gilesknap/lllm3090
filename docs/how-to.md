@@ -4,6 +4,7 @@
 :maxdepth: 1
 
 how-to/claude-code
+how-to/context-and-slots
 how-to/remote-access
 how-to/own-gguf
 how-to/troubleshooting

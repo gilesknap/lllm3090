@@ -15,6 +15,8 @@ lllm3090 <command> [options]
 | `panel [--port N]` | Run the control panel in the foreground |
 | `claude [args…]` | Launch Claude Code against the local engine |
 
+See [](../how-to/context-and-slots.md) for choosing between them.
+
 `start` computes the KV pool from what fits, splits it into `--parallel` slots
 (default 2, so an agent's subagents have somewhere to go), and gives each slot
 as much as it can up to the model's RoPE ceiling. `--ctx` overrides the whole
