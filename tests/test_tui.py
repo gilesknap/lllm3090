@@ -151,14 +151,12 @@ def test_a_speed_is_never_shown_without_where_it_was_measured(snap):
     for width in (60, 72, 80, 100, 132, 200):
         rows = [
             line.text
-            for line in tui.render(snap, tui.Ui(pane="catalog"), width, 40)
+            for line in tui.render(snap, tui.Ui(), width, 40)
             if elsewhere["name"] in line.text
         ]
         for row in rows:
             assert "tok/s" not in row or "(other card)" in row, f"{width}: {row!r}"
-    wide = "\n".join(
-        line.text for line in tui.render(snap, tui.Ui(pane="catalog"), 132, 40)
-    )
+    wide = "\n".join(line.text for line in tui.render(snap, tui.Ui(), 132, 40))
     assert "(other card)" in wide, "a window with room must show the qualifier"
 
 
@@ -177,6 +175,26 @@ def test_the_row_under_the_cursor_is_always_drawn(snap):
                     assert start <= index < end or index >= count
 
 
+def test_a_wide_window_gives_the_names_more_room(snap):
+    """Model names are long, and 18 columns cuts most of the catalogue short.
+
+    Past 96 columns there is room for 24, which is the difference between
+    ``Qwen3.6-35B-A3B`` and the same name with its quantisation lopped off.
+    """
+    def gap(width: int) -> int:
+        """Blanks between the end of the name and the start of its size."""
+        line = next(
+            line.text for line in tui.render(snap, tui.Ui(), width, 30)
+            if "Muse-Glimmer-30B" in line.text
+        )
+        tail = line[line.index("Muse-Glimmer-30B") + len("Muse-Glimmer-30B"):]
+        return len(tail) - len(tail.lstrip(" "))
+
+    # 24 columns of name against 18, so six more blanks after a 16-character one.
+    assert gap(120) - gap(95) == 6
+    assert gap(96) == gap(200) > gap(95) == gap(60)
+
+
 def test_the_log_pane_shows_the_end_of_the_log(snap):
     """A load failure is at the bottom of the log, never at the top."""
     screen = [line.text for line in tui.render(snap, tui.Ui(), 100, 24)]
@@ -190,21 +208,110 @@ def test_a_download_in_flight_shows_its_progress(snap):
         {"id": "muse-glimmer-30b", "name": "Muse-Glimmer-30B",
          "state": "downloading", "percent": 41.2, "rate_mib_s": 33.1, "detail": ""}
     ]
-    screen = "\n".join(
-        line.text for line in tui.render(snap, tui.Ui(pane="catalog"), 100, 30)
-    )
+    screen = "\n".join(line.text for line in tui.render(snap, tui.Ui(), 100, 30))
     assert "41.2%" in screen
     assert "#" in screen
 
 
 def test_a_machine_with_nothing_downloaded_still_draws(snap):
-    """The state a fresh install is in, and the one with no list to scroll."""
+    """The state a fresh install is in: every row is one you have to fetch.
+
+    Merging the two lists means a fresh machine is no longer an empty pane
+    under a full one -- it is the catalogue with no ``+`` anywhere, and the
+    marker column is the only thing saying so.
+    """
     snap["installed"] = []
+    for c in snap["catalog"]:
+        c["installed"] = False
     snap["engine"] = {"running": False, "pid": None, "port": 1919,
                       "answering": False, "model": None}
     lines = tui.render(snap, tui.Ui(), 80, 24)
     assert len(lines) <= 24
-    assert any("nothing downloaded" in line.text for line in lines)
+    drawn = [line.text for line in lines if "Qwen3" in line.text]
+    assert drawn, "the catalogue is still the list, with nothing on disk in it"
+    for text in drawn:
+        assert "+" not in text and "on disk" not in text
+
+
+def test_the_two_lists_became_one_with_what_is_on_disk_at_the_top(snap):
+    """Eight models shown twice was a join left to the reader.
+
+    One row per model, on-disk first, catalogue order inside each group -- and
+    the marker column carries what the two section headings used to.
+    """
+    rows = tui.model_rows(snap)
+    assert [r["name"] for r in rows] == [
+        "Qwen3.6-35B-A3B", "Qwen3-8B", "Muse-Glimmer-30B", "Something-70B"
+    ]
+    assert [r["on_disk"] for r in rows] == [True, True, False, False]
+    assert [r["running"] for r in rows] == [True, False, False, False]
+    screen = [line.text for line in tui.render(snap, tui.Ui(), 100, 30)]
+    assert any("*MODELS" in text for text in screen)
+    assert not any("INSTALLED" in text or "CATALOGUE" in text for text in screen)
+
+
+def test_a_gguf_the_catalogue_never_heard_of_is_still_in_the_list(snap):
+    """It is on disk, so it is startable, so hiding it would lose a model.
+
+    Its window is whatever the snapshot says -- which is what ``launch_plan``
+    said -- rather than a constant this renderer restates for itself.
+    """
+    snap["installed"] = list(MODELS) + [
+        {"name": "Nobody-Curated-7B", "path": "/m/n/w.gguf", "mmproj": None,
+         "gb": 4.2, "kind": "gguf", "fits": True, "max_ctx": 32768, "parallel": 2}
+    ]
+    rows = tui.model_rows(snap)
+    stray = next(r for r in rows if r["name"] == "Nobody-Curated-7B")
+    assert stray["on_disk"] and stray["kind"] == "gguf"
+    assert (stray["max_ctx"], stray["parallel"]) == (32768, 2)
+    assert stray["expected_tok_s"] is None, "nobody benchmarked it, so no number"
+    # On disk, so above everything that is not.
+    assert [r["on_disk"] for r in rows] == [True, True, True, False, False]
+    line = next(
+        line.text for line in tui.render(snap, tui.Ui(), 100, 30)
+        if "Nobody-Curated-7B" in line.text
+    )
+    assert "32k x2" in line and "on disk" in line
+
+
+def test_each_row_says_the_one_thing_that_is_true_of_it(snap):
+    """The right-hand field is a precedence, not a set of independent flags.
+
+    A model that is running is also on disk, and one that is downloading is
+    neither yet -- so the order the states are tested in is the whole of what
+    the column means.
+    """
+    snap["downloads"] = [
+        {"id": "muse-glimmer-30b", "name": "Muse-Glimmer-30B",
+         "state": "downloading", "percent": 41.2, "rate_mib_s": 33.1, "detail": ""},
+        {"id": "too-big", "name": "Something-70B", "state": "error",
+         "percent": 0.0, "rate_mib_s": 0.0, "detail": "disk full"},
+    ]
+    ends = {}
+    for line in tui.render(snap, tui.Ui(row=99), 110, 30):
+        for name in ("Qwen3.6-35B-A3B", "Qwen3-8B", "Muse-Glimmer-30B",
+                     "Something-70B"):
+            if name in line.text:
+                ends[name] = line.text.rstrip()
+    assert ends["Qwen3.6-35B-A3B"].endswith("running")
+    assert ends["Qwen3-8B"].endswith("on disk")
+    assert ends["Muse-Glimmer-30B"].endswith("41.2%")
+    assert ends["Something-70B"].endswith("failed")
+
+    # And "too big" only when nothing more specific applies.
+    snap["downloads"] = []
+    line = next(
+        line.text for line in tui.render(snap, tui.Ui(), 110, 30)
+        if "Something-70B" in line.text
+    )
+    assert line.rstrip().endswith("too big")
+
+
+def test_the_marker_column_is_explained_where_there_is_room_to(snap):
+    """It is three characters of vocabulary with nothing else to teach it."""
+    note = tui.footer(snap, tui.Ui(), 100)[0].text
+    assert "* running" in note and "+ on disk" in note
+    assert snap["models_dir"] in note
 
 
 def test_the_footer_says_when_the_panel_is_not_there(snap):
@@ -233,32 +340,57 @@ def test_a_start_that_failed_says_why_whoever_pressed_it(snap):
 
 
 def test_start_acts_on_the_row_the_cursor_is_on(snap):
-    """Not on the first row, and not on whatever the engine last ran.
-
-    The catalogue pane starts a model too, when that entry is downloaded --
-    otherwise the obvious keypress on the obvious row would do nothing.
-    """
+    """Not on the first row, and not on whatever the engine last ran."""
     control = tui.Control()
     submit = Recorder()
-    ui = tui.Ui(pane="models", model=1)
-    tui.handle_key("s", snap, ui, control, submit)
+    tui.handle_key("s", snap, tui.Ui(row=1), control, submit)
     assert submit.labels == ["start Qwen3-8B"]
 
-    submit = Recorder()
-    ui = tui.Ui(pane="catalog", entry=0)
+
+def test_start_on_a_row_that_is_only_a_catalogue_entry_says_to_fetch_it(snap):
+    """One list means ``s`` lands on rows that are not startable yet.
+
+    The old UI could not reach this: the installed pane held only models on
+    disk. Now the cursor can sit on a name that is nowhere on this machine, and
+    the key that would start it has to say what to press instead.
+    """
+    control, submit, ui = tui.Control(), Recorder(), tui.Ui(row=2)
     tui.handle_key("s", snap, ui, control, submit)
-    assert submit.labels == ["start Qwen3.6-35B-A3B"]
+    assert submit.calls == []
+    assert ui.message == "Muse-Glimmer-30B is not downloaded -- press d"
+
+
+def test_starting_the_model_that_is_already_running_is_not_a_restart(snap):
+    """The row says ``running``; pressing start on it should not stop it."""
+    control, submit, ui = tui.Control(), Recorder(), tui.Ui(row=0)
+    tui.handle_key("s", snap, ui, control, submit)
+    assert submit.calls == []
+    assert "already running" in ui.message
+
+
+def test_downloading_something_already_on_disk_is_not_a_download(snap):
+    control, submit, ui = tui.Control(), Recorder(), tui.Ui(row=1)
+    tui.handle_key("d", snap, ui, control, submit)
+    assert submit.calls == []
+    assert "already downloaded" in ui.message
+
+
+def test_cancel_on_a_row_with_nothing_in_flight_says_so(snap):
+    control, submit, ui = tui.Control(), Recorder(), tui.Ui(row=2)
+    tui.handle_key("c", snap, ui, control, submit)
+    assert submit.calls == []
+    assert "nothing is downloading" in ui.message
 
 
 def test_a_model_that_does_not_fit_is_never_downloaded(snap):
-    """The catalogue shows entries that do not fit so the reason is visible.
+    """The list shows entries that do not fit so the reason is visible.
 
     Showing them is not offering them: the panel rejects such a download with a
     400, and the terminal UI must not spend 40 GB finding that out.
     """
     control = tui.Control()
     submit = Recorder()
-    ui = tui.Ui(pane="catalog", entry=3)
+    ui = tui.Ui(row=3)
     tui.handle_key("d", snap, ui, control, submit)
     assert submit.calls == []
     assert "does not fit" in ui.message
@@ -289,7 +421,7 @@ def test_every_key_the_footer_advertises_does_something(snap):
 def test_quitting_is_the_only_key_that_ends_the_loop(snap):
     control = tui.Control()
     assert tui.handle_key("q", snap, tui.Ui(), control, Recorder()) is False
-    for key in ("s", "x", "d", "c", "tab", "up", "down", "P", "z"):
+    for key in ("s", "x", "d", "c", "up", "down", "j", "k", "P", "z"):
         assert tui.handle_key(key, snap, tui.Ui(), control, Recorder()) is True
 
 
@@ -433,7 +565,7 @@ def test_a_key_is_named_before_it_is_acted_on():
     """The handler is written against key names, not against terminal codes."""
     curses = FakeCurses()
     assert tui._key_name(curses, curses.KEY_UP) == "up"
-    assert tui._key_name(curses, 9) == "tab"
+    assert tui._key_name(curses, 9) == "\t", "tab is not a key this UI knows"
     assert tui._key_name(curses, ord("q")) == "q"
     assert tui._key_name(curses, ord("P")) == "P"
 
@@ -478,7 +610,7 @@ def test_the_curses_driver_paints_a_screen_and_quits(tmp_path, monkeypatch):
                     chunk = b""
                 gone = not chunk
                 painted += chunk.decode("utf-8", "replace")
-            if not sent and "INSTALLED" in painted:
+            if not sent and "MODELS" in painted:
                 os.write(fd, b"q")
                 sent = True
     finally:
@@ -493,8 +625,8 @@ def test_the_curses_driver_paints_a_screen_and_quits(tmp_path, monkeypatch):
         pytest.fail(f"the UI painted nothing recognisable: {painted!r}")
     assert status == 0, "the UI did not leave cleanly when asked to quit"
     assert "lllm3090" in painted
-    assert "CATALOGUE" in painted and "ENGINE LOG" in painted
-    assert "nothing downloaded yet" in painted
+    assert "MODELS" in painted and "ENGINE LOG" in painted
+    assert "INSTALLED" not in painted and "CATALOGUE" not in painted
 
 
 def test_the_cursor_survives_a_list_that_shrinks_under_it(snap):
@@ -506,18 +638,20 @@ def test_the_cursor_survives_a_list_that_shrinks_under_it(snap):
     exits when you press a key.
     """
     control, submit = tui.Control(), Recorder()
-    ui = tui.Ui(pane="models", model=1)
-    shrunk = dict(snap, installed=[MODELS[0]])
+    ui = tui.Ui(row=3)
+    # Only the two models on disk are left: the catalogue has not loaded.
+    shrunk = dict(snap, catalog=[], installed=[MODELS[1]])
     assert tui.handle_key("s", shrunk, ui, control, submit) is True
-    assert ui.model == 0, "the cursor must be pulled back onto the shorter list"
-    assert submit.labels == [f"start {MODELS[0]['name']}"], (
+    assert ui.row == 0, "the cursor must be pulled back onto the shorter list"
+    assert submit.labels == [f"start {MODELS[1]['name']}"], (
         "and the key must act on the row it was pulled back to"
     )
 
     empty = dict(snap, installed=[], catalog=[])
-    ui = tui.Ui(pane="models", model=3, entry=2)
+    ui = tui.Ui(row=3)
     assert tui.handle_key("s", empty, ui, tui.Control(), Recorder()) is True
-    assert (ui.model, ui.entry) == (0, 0)
+    assert ui.row == 0
+    assert "nothing here" in ui.message
     assert tui.render(empty, ui, 100, 30), "an empty machine still draws"
 
 
