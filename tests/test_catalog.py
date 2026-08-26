@@ -289,6 +289,60 @@ def test_an_unknown_session_is_assumed_to_be_a_desktop(monkeypatch):
     assert hardware.graphical() is True
 
 
+def test_startup_cost_holds_back_the_workspace_the_plan_held_back():
+    """What must be free is what the plan reserved, not just what it allocates.
+
+    ``fit()`` subtracts the workspace -- and the vision tower's buffers on top
+    of it -- before deciding on a context, so a check that compares free VRAM
+    against the load alone approves a plan the card cannot serve.
+    """
+    for m in catalog.load_catalog():
+        held = config.WORKSPACE_RESERVE_MIB
+        if m.vision:
+            held += config.VISION_WORKSPACE_RESERVE_MIB
+        loaded = catalog.vram_needed_mib(m, 65536)
+        assert catalog.startup_vram_mib(m, 65536) == loaded + held
+
+
+def test_the_gap_between_loading_and_serving_is_warned_about(monkeypatch):
+    """The regression: free VRAM above the load and below the requirement.
+
+    This is not a corner case, it is the shape of the failure -- the engine
+    loads, reports itself healthy, and then fails every request out of device
+    memory, because the room it needed to work in was never there.
+    """
+    m = next(x for x in catalog.load_catalog() if x.vision)
+    ctx = 65536
+    loaded = catalog.vram_needed_mib(m, ctx)
+    required = catalog.startup_vram_mib(m, ctx)
+    assert required > loaded, "a vision model must hold back workspace"
+
+    between = int((loaded + required) / 2)
+    monkeypatch.setattr(catalog.hardware, "free_vram_mib", lambda: between)
+    warning = catalog.free_vram_warning(m, ctx)
+    assert warning is not None, "a plan that loads and then starves is a warning"
+    assert f"{required / 1024:.1f} GB" in warning, (
+        "the warning must quote what serving needs, not what loading needs"
+    )
+
+    monkeypatch.setattr(
+        catalog.hardware, "free_vram_mib", lambda: int(required) + 1024
+    )
+    assert catalog.free_vram_warning(m, ctx) is None, "room to spare is not news"
+
+
+def test_nothing_is_claimed_when_the_card_cannot_be_measured(monkeypatch):
+    """No nvidia-smi is no measurement, and a guess here would be a false alarm
+    on every start on a machine without one."""
+    m = catalog.load_catalog()[0]
+    monkeypatch.setattr(catalog.hardware, "free_vram_mib", lambda: None)
+    assert catalog.free_vram_warning(m, 65536) is None
+    monkeypatch.setattr(catalog.hardware, "free_vram_mib", lambda: 1)
+    assert catalog.free_vram_warning(None, 65536) is None, (
+        "an uncatalogued GGUF has no known cache cost to compare against"
+    )
+
+
 def test_vram_needed_counts_the_projector_and_the_q8_cache():
     m = next(x for x in catalog.load_catalog() if x.vision)
     bare = catalog.vram_needed_mib(m, 0)
