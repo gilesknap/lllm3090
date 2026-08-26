@@ -1,15 +1,16 @@
 # lllm3090
 
-Local LLM serving for a single RTX 3090, with a browser control panel.
+Local LLM serving for a single consumer GPU, with a browser control panel.
 
 A llama.cpp engine, a web UI on loopback that starts and stops it and downloads
-models, and a curated model list where every entry has been checked to fit
-24 GB with a usable context left over.
+models, and a curated model list where every entry has been checked to fit 24 GB
+with a usable context left over — recomputed for whatever card it finds.
 
 ## Install
 
-Debian 13 or a derivative (Ubuntu 24.04 / 26.04), an RTX 3090, and the NVIDIA
-driver already working:
+Debian 13 or a derivative (Ubuntu 24.04 / 26.04), an NVIDIA GPU — the catalogue
+is curated for 24 GB and computed for whatever you have — and the driver already
+working:
 
 ```bash
 # uv, if you do not have it: https://docs.astral.sh/uv/getting-started/installation/
@@ -46,13 +47,25 @@ The engine exposes both the OpenAI API (`/v1/chat/completions`) and Anthropic's
 (`/v1/messages`) on `127.0.0.1:1919`, so Claude Code and OpenAI-compatible
 clients both work against it without a translation proxy.
 
-## Why it is scoped to one GPU
+## What travels to another card, and what does not
 
-Every figure in the model catalogue — download size, resident VRAM, KV cache
-cost per token, achievable context, expected tokens per second — is computed
-for 24 GB of GDDR6X at compute capability 8.6. On another card the software
-would still run and every number would be wrong, so the installer checks and
-warns.
+The catalogue makes two kinds of claim, and they do not travel together.
+
+**Whether a model fits, and what context it leaves,** is arithmetic over
+capacity. The GPU is detected and the figures are computed for *that* card, so
+they are right on a 4090, on a 32 GB 5090, on a 96 GB PRO 6000, and on a 16 GB
+5080 where most of the catalogue does not fit at all. An unrecognised card gets
+a profile synthesised from what `nvidia-smi` reports rather than falling back to
+3090 assumptions.
+
+**How fast it runs** is a measurement, true of the card it was taken on and
+nowhere else. Every tokens-per-second figure here was measured on an RTX 3090.
+Elsewhere they are labelled `(other card)` and are never scaled by a bandwidth
+ratio — that produces a guess which prints like a measurement.
+
+So the name is the card it was built and measured on, not a limit on where it
+runs. `lllm3090 bench` is how another card gets real numbers of its own; see
+[other cards](https://gilesknap.github.io/lllm3090/explanations/other-cards.html).
 
 ## Documentation
 

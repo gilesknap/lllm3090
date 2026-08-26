@@ -12,3 +12,6 @@ __pycache__/
 .ruff_cache/
 src/lllm3090/_version.py
 .venv/
+
+# Subagent scratch worktrees, not project content.
+.claude/worktrees/
