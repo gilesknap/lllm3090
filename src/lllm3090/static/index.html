@@ -12,123 +12,235 @@
         --rule:#253138;--ok:#58c4ac;--okbg:#103029;--bad:#e08066;--badbg:#33201a;--warn:#c9a24a;--warnbg:#2b2314}}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--mono);
-       font-size:15px;line-height:1.5;padding:2rem 1rem}
-  .wrap{max-width:44rem;margin:0 auto;display:flex;flex-direction:column;gap:1.25rem}
+       font-size:15px;line-height:1.5;padding:1.75rem 1rem}
+  .wrap{max-width:54rem;margin:0 auto;display:flex;flex-direction:column;gap:1rem}
+  .title{display:flex;align-items:flex-end;justify-content:space-between;gap:1rem;flex-wrap:wrap}
   h1{font-size:1.35rem;margin:0;letter-spacing:-.02em}
   .sub{color:var(--ink2);font-size:.8rem;margin:0}
+  .endpoint{color:var(--ink2);font-size:.74rem;margin:0;text-align:right}
   .card{background:var(--card);border:1px solid var(--rule);border-radius:6px;padding:1rem 1.15rem}
-  .row{display:flex;justify-content:space-between;gap:1rem;padding:.35rem 0;border-bottom:1px solid var(--rule)}
-  .row:last-child{border-bottom:0}
+  .card.status{padding:.85rem 1.15rem .95rem}
   .k{color:var(--ink2);font-size:.8rem}
-  .v{font-weight:600;text-align:right;word-break:break-all}
   .pill{display:inline-block;padding:.1rem .5rem;border-radius:99px;font-size:.72rem;font-weight:700}
   .p-ok{background:var(--okbg);color:var(--ok)} .p-bad{background:var(--badbg);color:var(--bad)}
   .p-warn{background:var(--warnbg);color:var(--warn)}
-  .models{display:flex;flex-direction:column;gap:.5rem;margin:.5rem 0 0}
-  label.m{display:flex;align-items:center;gap:.6rem;padding:.6rem .7rem;border:1px solid var(--rule);
-          border-radius:5px;cursor:pointer}
-  label.m:hover{border-color:var(--ok)}
-  label.m.active{border-color:var(--ok);background:var(--okbg)}
-  .m .nm{font-weight:700;flex:1} .m .sz{color:var(--ink2);font-size:.78rem}
-  .m .kind{font-size:.65rem;text-transform:uppercase;letter-spacing:.06em;padding:.12rem .4rem;
-    border-radius:3px;border:1px solid var(--rule);color:var(--ink2)}
-  .btns{display:flex;gap:.6rem;margin-top:1rem;flex-wrap:wrap}
   button{font-family:inherit;font-size:.85rem;font-weight:700;padding:.55rem 1.1rem;border-radius:5px;
          border:1px solid var(--rule);background:var(--card);color:var(--ink);cursor:pointer}
   button.primary{background:var(--ok);color:var(--bg);border-color:var(--ok)}
+  button.small{padding:.3rem .8rem;font-size:.74rem}
   button:disabled{opacity:.45;cursor:not-allowed}
   pre{background:var(--bg);border:1px solid var(--rule);border-radius:5px;padding:.7rem;
-      font-size:.75rem;overflow-x:auto;margin:.6rem 0 0;white-space:pre-wrap}
-  .bar{height:5px;background:var(--rule);border-radius:99px;overflow:hidden;margin-top:.3rem}
+      font-size:.75rem;overflow-x:auto;margin:.6rem 0 0;white-space:pre-wrap;word-break:break-word}
+
+  /* status: one line, because engine/model/VRAM are one fact about one card */
+  .statusrow{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}
+  .statusrow .nm{font-weight:700;flex:1 1 auto;min-width:0;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .statusrow .slots{color:var(--ink2);font-size:.78rem}
+  .statusrow .vram{font-weight:600;font-size:.85rem;white-space:nowrap}
+  .bar{height:5px;background:var(--rule);border-radius:99px;overflow:hidden;margin-top:.55rem}
   .bar i{display:block;height:100%;background:var(--ok)}
-  .loghead{display:flex;align-items:center;justify-content:space-between;gap:.6rem;margin-bottom:.5rem}
-  .loghead .ctl{display:flex;gap:.4rem;align-items:center}
-  .loghead button{padding:.3rem .7rem;font-size:.72rem}
-  #logbox{background:#0b1015;color:#cfe3dd;border:1px solid var(--rule);border-radius:5px;
-    height:20rem;overflow-y:auto;padding:.6rem .7rem;font-size:.72rem;line-height:1.45;
-    white-space:pre-wrap;word-break:break-word}
-  #logbox div{padding:.02rem 0}
-  #logbox .warn{color:#e0c26a} #logbox .err{color:#f08a70;font-weight:600}
-  #logbox .good{color:#66d9bd} #logbox .dim{color:#7d8f98}
-  #logbox .sep{color:#7d8f98;border-top:1px dashed #33454e;margin:.4rem 0;padding-top:.3rem}
-  .dot{width:7px;height:7px;border-radius:99px;display:inline-block;background:var(--bad)}
-  .dot.on{background:var(--ok)}
-  .cat{display:flex;flex-direction:column;gap:1.1rem;margin-top:.9rem;
-    max-height:34rem;overflow-y:auto;padding-right:.4rem;
-    scrollbar-width:thin;overscroll-behavior:contain}
-  .cat::-webkit-scrollbar{width:8px}
-  .cat::-webkit-scrollbar-thumb{background:var(--rule);border-radius:99px}
-  .tag.vis{background:var(--rule)}
-  .c{padding:.85rem .9rem;border:1px solid var(--rule);border-radius:6px}
-  .c.no{opacity:.5}
-  .chead{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
-  .c .nm{font-weight:700}
-  .c .meta{color:var(--ink2);font-size:.74rem;flex:1;min-width:12rem}
-  .c button{padding:.3rem .7rem;font-size:.74rem}
-  .cact{margin-left:auto;display:flex;align-items:center;gap:.5rem}
-  .tag{font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;padding:.1rem .35rem;
-       border-radius:3px;border:1px solid var(--rule);color:var(--ink2)}
+
+  /* the merged model list */
+  .listhead{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;flex-wrap:wrap}
   .note{color:var(--ink2);font-size:.74rem;margin:.45rem 0 0;line-height:1.55}
-  .c details{margin-top:.55rem}
-  .c .bar{margin-top:.6rem}
-  details summary{cursor:pointer;font-size:.78rem;color:var(--ink2)}
-  details[open] summary{margin-bottom:.15rem}
+  #catnote{flex:1 1 14rem;min-width:0;text-align:right;margin:0;text-wrap:pretty}
+  .cols,.rhead{display:flex;align-items:center;gap:.6rem}
+  .cols{padding:.8rem .3rem .35rem;border-bottom:1px solid var(--rule);
+    color:var(--ink2);font-size:.62rem;text-transform:uppercase;letter-spacing:.06em}
+  .c-name{flex:1 1 auto;min-width:0}
+  .c-size{flex:0 0 4rem;text-align:right}
+  .c-ctx{flex:0 0 5rem;text-align:right}
+  .c-speed{flex:0 0 6rem;text-align:right}
+  .c-act{flex:0 0 6.5rem;text-align:right}
+  .group{color:var(--ink2);font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;
+    margin:.75rem .3rem .15rem}
+  .r{border-bottom:1px solid var(--rule)}
+  .r.no{opacity:.5}
+  .r.on{background:var(--okbg)}
+  .rhead{padding:.55rem .3rem;cursor:pointer}
+  .rhead:hover{background:var(--bg)}
+  .caret{flex:0 0 .7rem;color:var(--ink2);font-size:.7rem}
+  .dot{flex:0 0 7px;width:7px;height:7px;border-radius:99px;background:var(--rule)}
+  .dot.disk{background:var(--ink2)} .dot.run{background:var(--ok)}
+  .rhead .c-name{display:flex;align-items:center;gap:.5rem}
+  .rhead .nm{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rhead .c-size,.rhead .c-ctx{font-size:.78rem;color:var(--ink2);white-space:nowrap}
+  /* The only cell allowed to wrap. A speed measured on another card carries the
+     words that say so, and "(other card)" does not fit beside the figure in six
+     rem -- so it goes onto a second line rather than over its neighbour or, far
+     worse, off the end as a bare number. */
+  .rhead .c-speed{font-size:.78rem;color:var(--ink2);line-height:1.25}
+  .rhead .c-act{display:flex;align-items:center;justify-content:flex-end}
+  .tag{font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;padding:.1rem .35rem;
+       border-radius:3px;border:1px solid var(--rule);color:var(--ink2);white-space:nowrap}
+  .tag.vis{background:var(--rule)}
+  .prog{display:flex;align-items:center;gap:.6rem;margin:0 .3rem .5rem}
+  .prog .bar{flex:1 1 auto;min-width:0;height:4px;margin:0}
+  .prog .k{flex:0 0 auto;font-size:.72rem;white-space:nowrap}
+  .err{color:var(--bad);font-size:.74rem;margin:0 .3rem .5rem;line-height:1.55}
+  .more{padding:.1rem 1.9rem .8rem;display:flex;flex-direction:column;gap:.3rem}
+  .more p{color:var(--ink2);font-size:.74rem;margin:0;line-height:1.55;text-wrap:pretty}
+
+  .loghead{display:flex;align-items:center;justify-content:space-between;gap:.6rem}
+  .loghead .left{display:flex;align-items:center;gap:.6rem}
+  .loghead button{padding:.3rem .7rem;font-size:.72rem}
+  #log{height:11rem;overflow-y:auto}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <div>
-    <h1>lllm3090</h1>
-    <p class="sub" id="sub">local models on one GPU</p>
+  <div class="title">
+    <div>
+      <h1>lllm3090</h1>
+      <p class="sub" id="sub">local models on one GPU</p>
+    </div>
+    <p class="endpoint">http://127.0.0.1:1919</p>
   </div>
 
-  <div class="card">
-    <div class="row"><span class="k">engine</span><span class="v" id="eng">-</span></div>
-    <div class="row"><span class="k">model</span><span class="v" id="mdl">-</span></div>
-    <div class="row"><span class="k">endpoint</span><span class="v">http://127.0.0.1:1919</span></div>
-    <div class="row"><span class="k">VRAM</span><span class="v" id="vram">-</span></div>
+  <div class="card status">
+    <div class="statusrow">
+      <span id="eng"></span>
+      <span class="nm" id="mdl">—</span>
+      <span class="slots" id="slots"></span>
+      <span class="vram" id="vram">—</span>
+      <button class="small" id="stop" style="display:none">Stop</button>
+    </div>
     <div class="bar"><i id="vbar" style="width:0"></i></div>
   </div>
 
   <div class="card">
-    <strong>Installed</strong>
-    <div class="models" id="installed"></div>
-    <p class="note" id="none" style="display:none">Nothing installed yet — pick one below.</p>
-    <div class="btns">
-      <button class="primary" id="start">Start</button>
-      <button id="stop">Stop</button>
+    <div class="listhead">
+      <strong>Models</strong>
+      <p class="note" id="catnote">Sized for this card. Context figures assume a q8 KV cache.</p>
     </div>
+    <div class="cols">
+      <span class="c-name">model</span>
+      <span class="c-size">size</span>
+      <span class="c-ctx">ctx × slots</span>
+      <span class="c-speed">decode</span>
+      <span class="c-act">action</span>
+    </div>
+    <div id="rows"></div>
     <pre id="last" style="display:none"></pre>
   </div>
 
   <div class="card">
-    <strong>Available to download</strong>
-    <p class="note" id="catnote">Sized for this card. Context figures assume a q8 KV cache.</p>
-    <div class="cat" id="catalog"></div>
-  </div>
-
-  <div class="card">
-    <div class="loghead"><strong>Engine log</strong><span class="k" id="logstate">connecting…</span></div>
-    <pre id="log" style="max-height:22rem;overflow-y:auto">…</pre>
+    <div class="loghead">
+      <div class="left"><strong>Engine log</strong><span class="k" id="logstate">connecting…</span></div>
+      <button id="logtoggle">hide</button>
+    </div>
+    <pre id="log">…</pre>
   </div>
 </div>
 <script>
 const $ = id => document.getElementById(id);
-let sel = null, busy = false;
+let busy = false;
+// Which row the reader has opened, and whether the log is showing. Everything
+// else on this page is the machine's business rather than this browser's.
+let expandedId = null, logOpen = true;
 
 function speedLabel(c){
   // No figure at all is the honest state for an entry nobody has benched yet.
   // Rendering it as "~null tok/s" would read as a broken panel.
   if (c.expected_tok_s == null) return 'speed not measured';
-  return `~${c.expected_tok_s} tok/s`
-    + (c.verified ? (c.speed_applies ? ' (measured)' : ' (other card)') : '');
+  return `~${c.expected_tok_s} tok/s` + (c.verified && !c.speed_applies ? ' (other card)' : '');
 }
 function fmtCtx(n){ return n >= 1024 ? Math.round(n/1024)+'k' : n; }
+function esc(s){ return String(s ?? '').replace(/[&<>"]/g, ch =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch])); }
+
+// One row per model: the catalogue, plus any GGUF on disk it has never heard
+// of. On-disk first, catalogue order inside each group -- and recomputed only
+// here, on the poll, so a finished download moves its row once rather than
+// under whatever the reader is in the middle of clicking.
+function mergedRows(s){
+  const dls = Object.fromEntries(s.downloads.map(d => [d.id, d]));
+  const served = s.engine.running ? s.engine.model : null;
+  const rows = s.catalog.map(c => {
+    const d = dls[c.id];
+    const fetching = !!(d && (d.state === 'downloading' || d.state === 'queued'));
+    return Object.assign({}, c, {
+      onDisk: c.installed, running: c.name === served,
+      download: fetching ? d : null, failed: !!(d && d.state === 'error'),
+      detail: d ? d.detail : '',
+    });
+  });
+  const known = new Set(s.catalog.map(c => c.name));
+  for (const m of s.installed){
+    if (known.has(m.name)) continue;
+    // Startable, so it belongs in the list. Its window came from the snapshot,
+    // which got it from launch_plan -- the call the start itself will make.
+    rows.push({
+      id: null, name: m.name, gb: m.gb, kind: m.kind || 'gguf', vision: false,
+      params: '', notes: '', fits: m.fits !== false,
+      max_ctx: m.max_ctx, parallel: m.parallel,
+      expected_tok_s: null, verified: false, speed_applies: true,
+      installed: true, onDisk: true, running: m.name === served,
+      download: null, failed: false, detail: '',
+    });
+  }
+  // Stable in every engine that matters, so catalogue order survives.
+  rows.sort((a, b) => (a.onDisk ? 0 : 1) - (b.onDisk ? 0 : 1));
+  return rows;
+}
+
+function rowKey(c){ return c.id || 'disk:' + c.name; }
+
+function actionHtml(c){
+  const key = esc(rowKey(c));
+  if (c.running)  return `<button class="small" onclick="act(event,'/api/stop')">Stop</button>`;
+  if (c.download) return `<button class="small" onclick="act(event,'/api/download/${key}/cancel')">Cancel</button>`;
+  if (c.onDisk)   return `<button class="small primary" onclick="act(event,'/api/start?model=${encodeURIComponent(c.name)}')">Start</button>`;
+  if (!c.fits)    return `<span class="pill p-bad">too big</span>`;
+  return `<button class="small" onclick="act(event,'/api/download/${key}')">Get</button>`;
+}
+
+function rowHtml(c, groupLabel){
+  const open = expandedId === rowKey(c);
+  const ctx = c.fits && c.max_ctx ? `${fmtCtx(c.max_ctx)} × ${c.parallel}` : '—';
+  return `
+  <div class="r ${c.fits ? '' : 'no'} ${c.running ? 'on' : ''}">
+    ${groupLabel ? `<p class="group">${groupLabel}</p>` : ''}
+    <div class="rhead" onclick="toggle('${esc(rowKey(c))}')">
+      <span class="caret">${open ? '▾' : '▸'}</span>
+      <span class="dot ${c.running ? 'run' : c.onDisk ? 'disk' : ''}"></span>
+      <span class="c-name">
+        <span class="nm">${esc(c.name)}</span>
+        <span class="tag">${esc(c.kind)}</span>
+        ${c.vision ? '<span class="tag vis">vision</span>' : ''}
+      </span>
+      <span class="c-size">${c.gb} GB</span>
+      <span class="c-ctx">${ctx}</span>
+      <span class="c-speed">${esc(speedLabel(c))}</span>
+      <span class="c-act">${actionHtml(c)}</span>
+    </div>
+    ${c.download ? `<div class="prog">
+      <div class="bar"><i id="pb-${esc(rowKey(c))}" style="width:0"></i></div>
+      <span class="k" id="pt-${esc(rowKey(c))}"></span>
+    </div>` : ''}
+    ${c.failed ? `<p class="err" id="er-${esc(rowKey(c))}"></p>` : ''}
+    ${open ? `<div class="more">
+      <p>${esc(c.params)}</p><p>${esc(c.notes)}</p>
+    </div>` : ''}
+  </div>`;
+}
+
+function toggle(key){
+  expandedId = expandedId === key ? null : key;
+  refresh();
+}
+// The click on a button inside a row must not also open the row it is in.
+function act(ev, url){
+  ev.stopPropagation();
+  ev.currentTarget.disabled = true;
+  post(url);
+}
 
 async function refresh(){
   let s;
   try { s = await (await fetch('/api/status')).json(); }
-  catch { $('eng').textContent = 'panel unreachable'; return; }
+  catch { $('mdl').textContent = 'panel unreachable'; return; }
 
   $('sub').textContent = (s.card ? s.card.name + ' · ' + s.card.vram_gb + ' GB' : 'local models')
                        + ' · v' + s.version;
@@ -137,7 +249,10 @@ async function refresh(){
     ? (e.answering ? '<span class="pill p-ok">running</span>'
                    : '<span class="pill p-warn">loading</span>')
     : '<span class="pill p-bad">stopped</span>';
-  $('mdl').textContent = e.model || '—';
+  $('mdl').textContent = e.model || 'no model loaded';
+  busy = s.busy;
+  $('stop').style.display = e.running ? '' : 'none';
+  $('stop').disabled = busy;
 
   if (s.vram){
     const pct = 100 * s.vram.used_mb / s.vram.total_mb;
@@ -145,83 +260,68 @@ async function refresh(){
     $('vbar').style.width = pct + '%';
   }
 
-  // installed models
-  const inst = s.installed;
-  $('none').style.display = inst.length ? 'none' : 'block';
-  if (!sel && inst.length) sel = e.model || inst[0].name;
-  $('installed').innerHTML = inst.map(m => `
-    <label class="m ${m.name===sel?'active':''}">
-      <input type="radio" name="m" value="${m.name}" ${m.name===sel?'checked':''}>
-      <span class="nm">${m.name}</span><span class="sz">${m.gb} GB</span>
-    </label>`).join('');
-  $('installed').querySelectorAll('input').forEach(i => i.onchange = () => { sel = i.value; refresh(); });
+  const rows = mergedRows(s);
+  // What the running model was actually started with, from its own row. An
+  // uncatalogued one has nothing to say here, and says nothing.
+  const run = rows.find(c => c.running);
+  $('slots').textContent = run && run.max_ctx
+    ? `${fmtCtx(run.max_ctx)} × ${run.parallel} slots` : '';
 
-  busy = s.busy;
-  $('start').disabled = busy || !sel;
-  $('stop').disabled  = busy || !e.running;
-  if (s.last && s.last.action){
-    $('last').style.display = 'block';
-    $('last').textContent = `${s.last.ok ? 'ok' : 'FAILED'}: ${s.last.action}\n${s.last.detail}`;
-  }
-
-  // Catalogue: built once, then only the mutable parts are updated. Rewriting
-  // innerHTML on every poll would close any <details> the reader had opened,
-  // which is maddening while watching a download.
   // No-GPU first: with capacity borrowed from the reference profile, 'the full
   // card is available' would be describing a card that is not in this machine.
   if (s.card && s.card.present === false){
     $('catnote').innerHTML = 'No GPU detected. Context is computed against a '
-      + s.card.reference + '\u2019s memory so the catalogue can be read; it '
+      + s.card.reference + '’s memory so the catalogue can be read; it '
       + 'describes no card in this machine, and neither do the speeds.';
   } else if (s.card && s.card.desktop === false){
-    $('catnote').innerHTML = 'No desktop session detected \u2014 the full card is '
+    $('catnote').innerHTML = 'No desktop session detected — the full card is '
       + 'available, and the context figures below reflect that.';
   } else if (s.card && !s.card.measured){
     $('catnote').innerHTML = 'Context is computed for your card. Speeds were measured on a '
       + s.card.reference + ' and are shown for reference only — '
       + '<code>lllm3090 bench</code> contributes real ones.';
   }
-  const dls = Object.fromEntries(s.downloads.map(d => [d.id, d]));
-  if (!$('catalog').dataset.built){
-    $('catalog').innerHTML = s.catalog.map(c => `
-      <div class="c ${c.fits?'':'no'}" id="c-${c.id}">
-        <div class="chead">
-          <span class="nm">${c.name}</span>
-          <span class="tag">${c.kind}</span>
-          ${c.vision ? '<span class="tag vis">vision</span>' : ''}
-          <span class="meta">${c.gb} GB · ${fmtCtx(c.max_ctx)} × ${c.parallel} · ${speedLabel(c)}</span>
-          <span class="cact" id="a-${c.id}"></span>
-        </div>
-        <div class="bar" id="b-${c.id}" style="display:none"><i></i></div>
-        <p class="note" id="e-${c.id}" style="display:none;color:var(--bad)"></p>
-        <details><summary>${c.params}</summary><p class="note">${c.notes}</p></details>
-      </div>`).join('');
-    $('catalog').dataset.built = 1;
+
+  // The list is rebuilt only when its shape changes -- which rows there are,
+  // in which order, wearing which control. A percentage ticking up is not a
+  // change of shape, and rewriting innerHTML for one would drop the click the
+  // reader was halfway through and lose whatever text they had selected.
+  const groups = rows.map((c, i) =>
+    i === 0 ? (c.onDisk ? 'on disk' : 'available')
+            : (c.onDisk !== rows[i-1].onDisk ? 'available' : null));
+  const shape = JSON.stringify(rows.map((c, i) => [
+    rowKey(c), groups[i], c.onDisk, c.running, c.fits, !!c.download, c.failed,
+    expandedId === rowKey(c), c.max_ctx, c.parallel, c.gb,
+  ]));
+  if ($('rows').dataset.shape !== shape){
+    $('rows').innerHTML = rows.map((c, i) => rowHtml(c, groups[i])).join('');
+    $('rows').dataset.shape = shape;
   }
-  s.catalog.forEach(c => {
-    const d = dls[c.id], act = $('a-'+c.id), bar = $('b-'+c.id), err = $('e-'+c.id);
-    if (!act) return;
-    const busyDl = d && (d.state === 'downloading' || d.state === 'queued');
-    const html = busyDl
-      ? `<span class="k">${d.percent}% · ${d.rate_mib_s} MiB/s</span>
-         <button onclick="cancelDl('${c.id}')">Cancel</button>`
-      : c.installed ? `<span class="pill p-ok">installed</span>`
-      : !c.fits     ? `<span class="pill p-bad">too big</span>`
-      :               `<button onclick="download('${c.id}')">Download</button>`;
-    if (act.dataset.html !== html){ act.innerHTML = html; act.dataset.html = html; }
-    bar.style.display = busyDl ? 'block' : 'none';
-    if (busyDl) bar.firstElementChild.style.width = d.percent + '%';
-    const bad = d && d.state === 'error';
-    err.style.display = bad ? 'block' : 'none';
-    if (bad) err.textContent = d.detail;
+  // The mutable cells, every poll: progress is the only sign a 17 GB fetch is
+  // alive rather than wedged.
+  rows.forEach(c => {
+    const key = rowKey(c);
+    if (c.download){
+      $('pb-' + key).style.width = c.download.percent + '%';
+      $('pt-' + key).textContent = `${c.download.percent}% · ${c.download.rate_mib_s} MiB/s`;
+    }
+    if (c.failed) $('er-' + key).textContent = c.detail;
   });
+  $('rows').querySelectorAll('button').forEach(b => { b.disabled = busy; });
+
+  if (s.last && s.last.action){
+    $('last').style.display = 'block';
+    $('last').textContent = `${s.last.ok ? 'ok' : 'FAILED'}: ${s.last.action}\n${s.last.detail}`;
+  }
 }
 
 async function post(url){ try { await fetch(url, {method:'POST'}); } catch {} refresh(); }
-function download(id){ post('/api/download/' + id); }
-function cancelDl(id){ post('/api/download/' + id + '/cancel'); }
-$('start').onclick = () => { $('start').disabled = true; post('/api/start?model=' + encodeURIComponent(sel)); };
-$('stop').onclick  = () => { $('stop').disabled  = true; post('/api/stop'); };
+$('stop').onclick = () => { $('stop').disabled = true; post('/api/stop'); };
+$('logtoggle').onclick = () => {
+  logOpen = !logOpen;
+  $('log').style.display = logOpen ? '' : 'none';
+  $('logtoggle').textContent = logOpen ? 'hide' : 'show';
+};
 
 // engine log over SSE
 const log = $('log');

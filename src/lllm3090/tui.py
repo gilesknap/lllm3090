@@ -7,8 +7,9 @@ browser within reach of ``127.0.0.1:8080`` and no way to start a model except
 by remembering its name.
 
 This module is that panel drawn with ``curses``. It shows the same things:
-engine state, VRAM, what is installed, the catalogue with what fits and what it
-will do, downloads with progress, and the tail of the engine log.
+engine state, VRAM, one list of every model -- what is on disk and what is
+merely available, with what fits and what it will do -- downloads with
+progress, and the tail of the engine log.
 
 Two decisions are worth stating, because both could reasonably have gone the
 other way.
@@ -64,7 +65,6 @@ KEYS: tuple[tuple[str, str], ...] = (
     ("x", "stop"),
     ("d", "download"),
     ("c", "cancel"),
-    ("tab", "pane"),
     ("P", "panel"),
     ("q", "quit"),
 )
@@ -82,23 +82,20 @@ class Line:
 class Ui:
     """What the user is looking at -- everything the snapshot does not say."""
 
-    pane: str = "models"
-    model: int = 0
-    entry: int = 0
+    row: int = 0
     message: str = ""
     busy: str = ""
 
     def clamp(self, snap: dict[str, Any]) -> None:
-        """Pull the cursors back inside lists that may have shrunk.
+        """Pull the cursor back inside a list that may have shrunk.
 
         The poller replaces the snapshot on its own thread, so a model deleted
-        from disk -- or a catalogue that has not loaded yet -- can leave a
+        from disk -- or a catalogue that has not loaded yet -- can leave the
         cursor pointing past the end of the list it was placed in. Every read
         of that cursor is then an ``IndexError``, and an exception out of
         ``handle_key`` closes the UI on a keypress.
         """
-        self.model = min(max(0, self.model), max(0, len(snap["installed"]) - 1))
-        self.entry = min(max(0, self.entry), max(0, len(snap["catalog"]) - 1))
+        self.row = min(max(0, self.row), max(0, len(model_rows(snap)) - 1))
 
 
 # ---------------------------------------------------------------------------
@@ -317,51 +314,106 @@ def _engine_lines(snap: dict[str, Any], width: int) -> list[Line]:
     return lines
 
 
-def _model_lines(
-    snap: dict[str, Any], ui: Ui, width: int, rows: int
-) -> list[Line]:
-    installed = snap["installed"]
-    if not installed:
-        return [Line("  nothing downloaded yet -- pick one below", "dim")][:rows]
-    served = snap["engine"]["model"]
-    out = []
-    start, end = window(len(installed), ui.model, rows)
-    for i in range(start, end):
-        m = installed[i]
-        chosen = ui.pane == "models" and i == ui.model
-        left = f" {'>' if chosen else ' '} {m['name']:<26} {m['gb']:>6.1f} GB"
-        right = "running" if m["name"] == served else ""
-        out.append(Line(_columns(left, right, width), "sel" if chosen else ""))
-    return out
+def model_rows(snap: dict[str, Any]) -> list[dict[str, Any]]:
+    """One list: the catalogue, plus any GGUF on disk it has never heard of.
+
+    The same eight models used to appear twice -- once as INSTALLED and once as
+    CATALOGUE -- which left the reader to do the join and made ``s`` mean two
+    slightly different things depending on which copy the cursor happened to be
+    on. There is one row per model now, and what it offers depends on the state
+    that row is in.
+
+    On-disk rows come first and catalogue order is kept inside each group, so
+    the models that start without waiting are at the top. The sort is stable
+    and reads only the snapshot, which means a finished download moves its row
+    once, when the poller hands over a new one, and not under a held ``j``.
+    """
+    served = snap["engine"]["model"] if snap["engine"]["running"] else None
+    active = {d["id"]: d for d in snap["downloads"]}
+    rows = []
+    for c in snap["catalog"]:
+        d = active.get(c["id"])
+        fetching = d and d["state"] in {"queued", "downloading"}
+        rows.append(
+            {
+                **c,
+                "on_disk": c["installed"],
+                "running": c["name"] == served,
+                "download": d if fetching else None,
+                "failed": bool(d and d["state"] == "error"),
+            }
+        )
+    catalogued = {c["name"] for c in snap["catalog"]}
+    for m in snap["installed"]:
+        if m["name"] in catalogued:
+            continue
+        # A GGUF nobody curated is still something you can start, so it belongs
+        # in the list. Its window came from the snapshot, which got it from
+        # launch_plan -- the same call the start itself will make.
+        rows.append(
+            {
+                "id": None,
+                "name": m["name"],
+                "gb": m["gb"],
+                "kind": m.get("kind", "gguf"),
+                "vision": False,
+                "params": "",
+                "notes": "",
+                "fits": m.get("fits", True),
+                "max_ctx": m.get("max_ctx", catalog.UNKNOWN_MODEL_CTX),
+                "parallel": m.get("parallel", config.DEFAULT_PARALLEL),
+                "expected_tok_s": None,
+                "verified": False,
+                "speed_applies": True,
+                "installed": True,
+                "on_disk": True,
+                "running": m["name"] == served,
+                "download": None,
+                "failed": False,
+            }
+        )
+    rows.sort(key=lambda r: 0 if r["on_disk"] else 1)
+    return rows
 
 
-def _entry_lines(
-    snap: dict[str, Any], ui: Ui, width: int, rows: int
+def _row_lines(
+    rows: list[dict[str, Any]], ui: Ui, width: int, height: int
 ) -> list[Line]:
-    entries = snap["catalog"]
-    downloading = {d["id"]: d for d in snap["downloads"]}
+    """The merged list, scrolled so the cursor is on screen.
+
+    The marker between the cursor and the name is the whole of what used to be
+    two panes: ``*`` is the model this card is serving, ``+`` is one already on
+    disk, and a space is one you would have to fetch first.
+    """
+    if not rows:
+        return [Line("  nothing to show -- the catalogue did not load", "dim")][:height]
     out = []
-    start, end = window(len(entries), ui.entry, rows)
+    start, end = window(len(rows), ui.row, height)
     for i in range(start, end):
-        c = entries[i]
-        chosen = ui.pane == "catalog" and i == ui.entry
+        c = rows[i]
+        chosen = i == ui.row
+        mark = "*" if c["running"] else ("+" if c["on_disk"] else " ")
         kind = c["kind"] + ("+vis" if c["vision"] else "")
         ctx = f"{fmt_ctx(c['max_ctx'])} x{c['parallel']}" if c["fits"] else "-"
         name_width = 24 if width >= 96 else 18
         base = (
-            f" {'>' if chosen else ' '} {c['name']:<{name_width}} {c['gb']:>5.1f}G "
-            f"{kind:<8} {ctx:>10}"
+            f" {'>' if chosen else ' '}{mark} {c['name']:<{name_width}} "
+            f"{c['gb']:>5.1f}G {kind:<9} {ctx:>10}"
         )
-        d = downloading.get(c["id"])
+        # The cursor keeps its highlight whatever the row's own state is: a
+        # reversed line that also went red would say less, not more.
         style = "sel" if chosen else ""
-        if d and d["state"] in {"queued", "downloading"}:
+        d = c["download"]
+        if d:
             right = f"{bar(d['percent'] / 100, 10)} {d['percent']:>5.1f}%"
-        elif d and d["state"] == "error":
-            right, style = "failed", "bad"
-        elif c["installed"]:
-            right = "installed"
+        elif c["failed"]:
+            right, style = "failed", style or "bad"
+        elif c["running"]:
+            right, style = "running", style or "ok"
+        elif c["on_disk"]:
+            right = "on disk"
         elif not c["fits"]:
-            right, style = "too big", "dim"
+            right, style = "too big", style or "dim"
         else:
             right = ""
         # The speed goes in whole or not at all. Half of "~115 tok/s (other
@@ -408,7 +460,10 @@ def footer(snap: dict[str, Any], ui: Ui, width: int) -> list[Line]:
         note = f"{verdict}: {last['action']} -- {last.get('detail', '')}"
         style = "dim" if last.get("ok") else "bad"
     else:
-        note, style = snap.get("models_dir", ""), "dim"
+        # Nothing has happened yet, so the line explains the marker column --
+        # the only thing on screen with no words of its own.
+        note = f"* running  + on disk       {snap.get('models_dir', '')}"
+        style = "dim"
     keys = "  ".join(f"{key} {what}" for key, what in KEYS)
     return [
         Line(note[:width], style),
@@ -433,19 +488,16 @@ def render(snap: dict[str, Any], ui: Ui, width: int, height: int) -> list[Line]:
             : max(height, 0)
         ]
 
-    # Three lists share what the fixed furniture leaves: two headers, the
-    # engine block, a section label each, and the two footer lines.
-    spare = height - 9
+    # Two lists share what the fixed furniture leaves: two headers, the engine
+    # block, a section rule each, and the two footer lines.
+    spare = height - 7
     log_rows = max(3, spare // 3)
-    rest = spare - log_rows
-    model_rows = max(1, min(len(snap["installed"]) or 1, max(2, rest // 2)))
-    entry_rows = max(1, rest - model_rows)
+    list_rows = max(1, spare - log_rows)
 
     lines = _header(snap, width) + _engine_lines(snap, width)
-    lines.append(Line(_section("INSTALLED", ui.pane == "models", width), "head"))
-    lines += _model_lines(snap, ui, width, model_rows)
-    lines.append(Line(_section("CATALOGUE", ui.pane == "catalog", width), "head"))
-    lines += _entry_lines(snap, ui, width, entry_rows)
+    # Always focused: with one list there is nothing to switch to.
+    lines.append(Line(_section("MODELS", True, width), "head"))
+    lines += _row_lines(model_rows(snap), ui, width, list_rows)
     lines.append(Line(_section("ENGINE LOG", False, width), "head"))
     lines += _log_lines(snap, width, log_rows)
     lines += footer(snap, ui, width)
@@ -462,37 +514,10 @@ def _section(title: str, focused: bool, width: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-def selected_model(snap: dict[str, Any], ui: Ui) -> str | None:
-    """The model the cursor is on, from whichever pane has focus.
-
-    A catalogue entry that is already downloaded is a model you can start, so
-    ``s`` means the same thing in both panes.
-    """
-    if ui.pane == "models":
-        installed = snap["installed"]
-        return installed[ui.model]["name"] if installed else None
-    entries = snap["catalog"]
-    if not entries:
-        return None
-    row = entries[ui.entry]
-    return row["name"] if row["installed"] else None
-
-
-def selected_entry(snap: dict[str, Any], ui: Ui) -> dict[str, Any] | None:
-    """The catalogue row the cursor is on, or None when the cursor is elsewhere."""
-    entries = snap["catalog"]
-    if ui.pane != "catalog" or not entries:
-        return None
-    return entries[ui.entry]
-
-
-def _move(snap: dict[str, Any], ui: Ui, delta: int) -> None:
-    if ui.pane == "models":
-        count = len(snap["installed"])
-        ui.model = min(max(0, ui.model + delta), max(0, count - 1))
-    else:
-        count = len(snap["catalog"])
-        ui.entry = min(max(0, ui.entry + delta), max(0, count - 1))
+def selected_row(snap: dict[str, Any], ui: Ui) -> dict[str, Any] | None:
+    """The row the cursor is on, or None when there is no list to be on."""
+    rows = model_rows(snap)
+    return rows[ui.row] if rows else None
 
 
 def handle_key(
@@ -508,41 +533,53 @@ def handle_key(
     if key in {"q", "escape"}:
         return False
     ui.message = ""
-    if key == "tab":
-        ui.pane = "catalog" if ui.pane == "models" else "models"
-    elif key in {"down", "j"}:
-        _move(snap, ui, 1)
+    rows = model_rows(snap)
+    row = rows[ui.row] if rows else None
+
+    def move(delta: int) -> None:
+        ui.row = min(max(0, ui.row + delta), max(0, len(rows) - 1))
+
+    if key in {"down", "j"}:
+        move(1)
     elif key in {"up", "k"}:
-        _move(snap, ui, -1)
+        move(-1)
     elif key == "npage":
-        _move(snap, ui, 5)
+        move(5)
     elif key == "ppage":
-        _move(snap, ui, -5)
+        move(-5)
     elif key == "s":
-        model = selected_model(snap, ui)
-        if model is None:
-            ui.message = "nothing installed to start -- download one first"
+        if row is None:
+            ui.message = "there is nothing here to start"
+        elif not row["on_disk"]:
+            # The row is in the list because every model is; that is not the
+            # same as being able to start it.
+            ui.message = f"{row['name']} is not downloaded -- press d"
+        elif row["running"]:
+            ui.message = f"{row['name']} is already running"
         else:
-            submit(f"start {model}", lambda: control.start(model))
+            submit(f"start {row['name']}", lambda: control.start(row["name"]))
     elif key == "x":
         if not snap["engine"]["running"]:
             ui.message = "the engine is not running"
         else:
             submit("stop the engine", control.stop)
     elif key == "d":
-        row = selected_entry(snap, ui)
         if row is None:
-            ui.message = "tab to the catalogue to download something"
-        elif row["installed"]:
+            ui.message = "there is nothing here to download"
+        elif row["on_disk"]:
             ui.message = f"{row['name']} is already downloaded"
         elif not row["fits"]:
+            # Showing an entry that does not fit is not offering it: the panel
+            # answers such a download with a 400, and 40 GB is an expensive way
+            # to find that out.
             ui.message = f"{row['name']} does not fit this card"
+        elif snap.get("source") == "local":
+            ui.message = "downloads need the panel -- press P to start it"
         else:
             submit(f"download {row['name']}", lambda: control.download(row["id"]))
     elif key == "c":
-        row = selected_entry(snap, ui)
-        if row is None:
-            ui.message = "tab to the catalogue to cancel a download"
+        if row is None or not row["download"]:
+            ui.message = "nothing is downloading here"
         else:
             submit(f"cancel {row['name']}", lambda: control.cancel(row["id"]))
     elif key == "P":
@@ -582,7 +619,6 @@ def _key_name(curses: Any, ch: int) -> str:
         curses.KEY_DOWN: "down",
         curses.KEY_NPAGE: "npage",
         curses.KEY_PPAGE: "ppage",
-        9: "tab",
         27: "escape",
     }
     if ch in named:

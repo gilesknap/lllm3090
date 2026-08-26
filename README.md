@@ -81,10 +81,13 @@ they do not](https://gilesknap.github.io/lllm3090/explanations/landscape.html)
 
 ![The lllm3090 control panel](docs/images/panel.png)
 
-Engine state and VRAM at the top, the models you have with start/stop, the
-curated list with what fits this card and what it will do, and the engine log
-streaming underneath. Downloads run in the background with progress, and resume
-from a part file if interrupted.
+Engine state and VRAM on one line at the top, then one list of every model —
+what is on this disk and what is merely available — with what fits this card
+and what it will do, and the engine log streaming underneath. Each row carries
+the only control that makes sense for it: **Start**, **Stop**, **Get**,
+**Cancel**, or a `too big` pill. Click a row to read what the model is for.
+Downloads run in the background with progress, and resume from a part file if
+interrupted.
 
 On a machine with no browser within reach of it — a text console, an SSH
 session without a tunnel — `lllm3090 tui` draws the same panel in the terminal.

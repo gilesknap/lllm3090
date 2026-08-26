@@ -40,6 +40,31 @@ def vram() -> dict[str, int] | None:
         return None
 
 
+def installed_models() -> list[dict[str, Any]]:
+    """What is on disk, with a stray GGUF carrying the window it would get.
+
+    Both front ends now draw one merged list, so a checkpoint the catalogue has
+    never heard of sits in it beside the curated ones and has to say the same
+    things they do. Its window comes from ``catalog.launch_plan`` -- the
+    same call a start makes -- rather than from each renderer restating
+    ``UNKNOWN_MODEL_CTX`` in its own language, which is how the console and the
+    browser would end up describing one model two ways.
+    """
+    known = {m.name for m in catalog.load_catalog()}
+    rows = []
+    for m in catalog.installed():
+        if m["name"] in known:
+            # The catalogue's own row for this model already carries its plan.
+            rows.append(m)
+            continue
+        plan = catalog.launch_plan(m["name"])
+        rows.append(
+            {**m, "kind": "gguf", "fits": True,
+             "max_ctx": plan.per_session, "parallel": plan.parallel}
+        )
+    return rows
+
+
 def snapshot() -> dict[str, Any]:
     """Everything a front end needs to draw the machine, in one call.
 
@@ -61,7 +86,7 @@ def snapshot() -> dict[str, Any]:
         "engine": engine.status(),
         "endpoint": config.ENGINE_URL,
         "vram": vram(),
-        "installed": catalog.installed(),
+        "installed": installed_models(),
         "catalog": catalog.catalog_for_panel(),
         "downloads": downloads.all_downloads(),
         "models_dir": str(config.MODELS_DIR),
