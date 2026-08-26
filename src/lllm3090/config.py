@@ -47,6 +47,15 @@ DESKTOP_RESERVE_MIB = 2400
 #: Compute buffers, CUDA/Vulkan graphs and fragmentation headroom.
 WORKSPACE_RESERVE_MIB = 1024
 
+#: Extra VRAM held back when a multimodal projector is loaded, on top of the
+#: workspace reserve above. The vision tower needs its own compute buffers, and
+#: they are not the projector file's size: measured on a 3090, Gemma-4-26B-A4B's
+#: 1.19 GB projector cost 1376 MiB resident, and at a full KV pool the engine
+#: then loaded happily and failed *every* request with
+#: ``vk::Device::allocateMemory: ErrorOutOfDeviceMemory``. Counting only the file
+#: promises context the card cannot serve.
+VISION_WORKSPACE_RESERVE_MIB = 1024
+
 #: Tokens an agent harness spends on system prompt and tool definitions before
 #: any of your work, every turn. Claude Code sits around 40k. A model whose
 #: per-conversation window is below this cannot run it at all -- the first

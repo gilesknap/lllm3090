@@ -118,6 +118,9 @@ def fit(
     """
     profile = profile or hardware.detect()
     budget = profile.usable_vram_mib(desktop)
+    if model.vision:
+        # The vision tower's compute buffers are not the projector's file size.
+        budget -= config.VISION_WORKSPACE_RESERVE_MIB
     spare = budget - model.weights_mib
     if spare <= 0:
         return Fit(False, 0, 0, int(spare))

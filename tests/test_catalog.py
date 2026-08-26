@@ -185,6 +185,24 @@ def test_a_projector_is_counted_against_the_budget():
         )
 
 
+def test_a_vision_entry_holds_back_workspace_for_the_vision_tower():
+    """A projector's file size is not what it costs to run.
+
+    Measured on a 3090: Gemma-4-26B-A4B's 1.19 GB projector occupied 1376 MiB,
+    and at a full KV pool the engine loaded, reported itself healthy, and failed
+    *every* request with `vk::Device::allocateMemory: ErrorOutOfDeviceMemory`.
+    Counting only the file promised context the card could not serve.
+    """
+    for m in catalog.load_catalog():
+        if not m.vision:
+            continue
+        as_text = replace(m, mmproj=None, mmproj_gb=m.mmproj_gb)
+        held_back = catalog.fit(as_text).pool_q8 - catalog.fit(m).pool_q8
+        assert held_back > 0, (
+            f"{m.id} reserves nothing extra for its vision tower"
+        )
+
+
 def test_a_vision_entry_names_a_projector_and_a_size():
     """One without the other silently under-counts VRAM or fails at launch."""
     for m in catalog.load_catalog():
