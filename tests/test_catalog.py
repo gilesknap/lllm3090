@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from lllm3090 import catalog, config
@@ -167,29 +169,96 @@ def test_the_recommendation_agrees_with_the_measurements():
     )
 
 
+def test_a_projector_is_counted_against_the_budget():
+    """Vision is not free: the projector sits in VRAM like any other weights.
+
+    Leaving it out of the arithmetic would promise context the projector has
+    already spent, which is the failure this whole module exists to prevent.
+    """
+    for m in catalog.load_catalog():
+        if not m.vision:
+            continue
+        text_only = replace(m, mmproj=None, mmproj_gb=0.0)
+        assert m.weights_mib > text_only.weights_mib, f"{m.id} projector is free?"
+        assert catalog.plan(m).pool <= catalog.plan(text_only).pool, (
+            f"{m.id} claims more context with a projector loaded than without"
+        )
+
+
+def test_a_vision_entry_names_a_projector_and_a_size():
+    """One without the other silently under-counts VRAM or fails at launch."""
+    for m in catalog.load_catalog():
+        assert bool(m.mmproj) == (m.mmproj_gb > 0), (
+            f"{m.id} has mmproj={m.mmproj!r} but mmproj_gb={m.mmproj_gb}"
+        )
+        if m.mmproj:
+            assert m.mmproj.endswith(".gguf"), f"{m.id} projector is not a GGUF"
+
+
+def test_a_projector_on_disk_is_never_served_as_the_model(tmp_path):
+    """--model pointed at a projector starts an engine that answers nothing.
+
+    Sorting matters: 'Gemma-4-26B...gguf' sorts before 'mmproj-F16.gguf' but a
+    lower-cased model name would not, and the first GGUF in the directory is
+    what gets served.
+    """
+    d = tmp_path / "some-model"
+    d.mkdir()
+    (d / "mmproj-F16.gguf").write_bytes(b"proj")
+    (d / "zz-weights-Q4_K_XL.gguf").write_bytes(b"weights")
+    entry = catalog.installed(models_dir=tmp_path)[0]
+    assert entry["path"].endswith("zz-weights-Q4_K_XL.gguf")
+    assert entry["mmproj"].endswith("mmproj-F16.gguf")
+
+
+def test_a_directory_holding_only_a_projector_is_not_a_model(tmp_path):
+    d = tmp_path / "orphan"
+    d.mkdir()
+    (d / "mmproj-F16.gguf").write_bytes(b"proj")
+    assert catalog.installed(models_dir=tmp_path) == []
+
+
 # --- hardware profiles ------------------------------------------------------
 # The point of profiles is that the arithmetic travels to cards nobody here
 # owns. These are the tests that can be written without one.
 
 
 @pytest.mark.parametrize(
-    "profile_id, expect_fits",
-    [
-        ("rtx-3090", 5),
-        ("rtx-4090", 5),   # same capacity as the 3090
-        ("rtx-5090", 5),   # more
-        ("rtx-5080", 2),   # 16 GB: only the two small models
-        ("rtx-pro-6000-blackwell", 5),
-    ],
+    "profile_id",
+    ["rtx-3090", "rtx-4090", "rtx-5090", "rtx-pro-6000-blackwell"],
 )
-def test_what_fits_follows_the_card(profile_id, expect_fits):
+def test_a_card_of_24gb_or_more_fits_the_whole_catalogue(profile_id):
+    """The catalogue is curated for a 3090, so nothing in it may fail on one.
+
+    Counting entries would make this a census that needs editing every time a
+    model is added. The invariant is that curation means what it says.
+    """
     from lllm3090 import hardware
 
     profile = next(p for p in hardware.load_profiles() if p.id == profile_id)
-    fits = [m for m in catalog.load_catalog() if catalog.fit(m, profile=profile).fits]
-    assert len(fits) == expect_fits, (
-        f"{profile_id}: {[m.name for m in fits]}"
-    )
+    missing = [
+        m.name for m in catalog.load_catalog()
+        if not catalog.fit(m, profile=profile).fits
+    ]
+    assert not missing, f"{profile_id} cannot fit curated entries: {missing}"
+
+
+def test_a_16gb_card_is_told_the_truth_about_what_does_not_fit():
+    """The 5080 has less memory than a card from 2020, and must say so.
+
+    This is the case the profile work exists for: before it, the panel would
+    have offered a 15.4 GB model on a 16 GB card and let someone find out after
+    the download.
+    """
+    from lllm3090 import hardware
+
+    small = next(p for p in hardware.load_profiles() if p.id == "rtx-5080")
+    models = catalog.load_catalog()
+    fits = [m.name for m in models if catalog.fit(m, profile=small).fits]
+    assert fits, "a 16 GB card should still run something"
+    assert len(fits) < len(models), "16 GB cannot hold everything curated for 24"
+    assert "Qwen3.8-27B" not in fits, "15.4 GB of weights leaves no usable cache"
+    assert "gpt-oss-20b" in fits, "the small models are the point of this card"
 
 
 def test_a_smaller_card_never_promises_more_context():

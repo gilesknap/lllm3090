@@ -123,3 +123,73 @@ models:
       Note the KV cost per token is the highest here despite the small weights
       -- 36 full-attention layers with no linear or sliding layers to make them
       cheap. Size and context are independent.
+
+  - id: gemma-4-26b-a4b
+    name: Gemma-4-26B-A4B
+    repo: unsloth/gemma-4-26B-A4B-it-GGUF
+    file: gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf
+    size_gb: 17.01
+    kind: moe
+    params: 26B total, 4B active (128 experts, 8 per token)
+    kv_kib_per_token: 20
+    max_ctx: 262144
+    expected_tok_s: null
+    mmproj: mmproj-F16.gguf
+    mmproj_gb: 1.19
+    verified: false
+    tags: [general, agentic, long-context, vision]
+    notes: >-
+      The first entry here that is not a Qwen or a gpt-oss, and the closest
+      thing to a peer for the recommendation: sparse, 4B active, and KV of 20
+      KiB/token -- the same figure as Qwen3.6-35B-A3B. 194k per conversation
+      with the projector loaded, 252k without it. Watch the KV derivation if you
+      change the quant: Gemma keeps a separate geometry for its 5 full-attention
+      layers (2 global KV heads, 512 head dim), and the flat config fields give
+      40 KiB/token, which would promise twice the context the card can hold.
+      Speed is unmeasured -- run 'lllm3090 bench' before believing anything.
+
+  - id: muse-glimmer-30b
+    name: Muse-Glimmer-30B
+    repo: unsloth/Muse-Glimmer-30B-GGUF
+    file: Muse-Glimmer-30B-UD-Q4_K_XL.gguf
+    size_gb: 15.88
+    kind: dense
+    params: 30B dense (52 layers, 13 of them full-attention)
+    kv_kib_per_token: 13
+    max_ctx: 131072
+    expected_tok_s: null
+    mmproj: mmproj-Muse-Glimmer-30B-Q8_0.gguf
+    mmproj_gb: 2.05
+    verified: false
+    tags: [general, long-context, parallel, vision]
+    notes: >-
+      The cheapest KV cache in the catalogue at 13 KiB/token, which is what
+      makes it the only entry to reach its full RoPE ceiling on **four**
+      concurrent conversations -- 131k each, projector included. That is the
+      subagent problem solved rather than budgeted around. The trade is that it
+      is **dense**: all 30B parameters are read per token, so expect decode
+      nearer the 27B's 35 tok/s than the sparse models' 120+. Take it when you
+      want several long conversations at once and can wait for each.
+
+  - id: gemma-4-12b-qat
+    name: Gemma-4-12B-QAT
+    repo: unsloth/gemma-4-12B-it-qat-GGUF
+    file: gemma-4-12B-it-qat-UD-Q4_K_XL.gguf
+    size_gb: 6.72
+    kind: dense
+    params: 12B dense, quantisation-aware trained
+    kv_kib_per_token: 16
+    max_ctx: 262144
+    expected_tok_s: null
+    mmproj: mmproj-F16.gguf
+    mmproj_gb: 0.18
+    verified: false
+    tags: [general, small, long-context, vision]
+    notes: >-
+      Quantisation-aware trained, so 4 bits is what it was trained for rather
+      than something done to it afterwards -- the reason to prefer this over a
+      post-quantised 12B. At 6.7 GB it leaves most of the card free and still
+      reaches the full 262k ceiling on four slots. A better smoke test than
+      Qwen3-8B, whose 32k window cannot hold an agent harness's system prompt,
+      and small enough to sit alongside something else.
+

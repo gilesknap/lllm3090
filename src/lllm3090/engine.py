@@ -89,6 +89,7 @@ def start(
     parallel: int = 1,
     wait: int = 300,
     chat_template: str | None = None,
+    mmproj: str | None = None,
 ) -> tuple[bool, str]:
     """Launch llama-server and block until it answers.
 
@@ -110,6 +111,8 @@ def start(
         )
     if not Path(model_path).exists():
         return False, f"model file not found: {model_path}"
+    if mmproj and not Path(mmproj).exists():
+        return False, f"projector not found: {mmproj}"
 
     config.STATE_DIR.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, LD_LIBRARY_PATH=str(config.LLAMA_DIR))
@@ -128,6 +131,9 @@ def start(
                 "--cache-type-k", "q8_0",
                 "--cache-type-v", "q8_0",
                 "--jinja",
+                # Vision: the projector is a separate GGUF that turns image
+                # input into embeddings the model can attend to.
+                *(["--mmproj", mmproj] if mmproj else []),
                 *(
                     ["--chat-template-file", str(
                         resources.files("lllm3090.data").joinpath(chat_template)

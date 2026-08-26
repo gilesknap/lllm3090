@@ -1,6 +1,6 @@
 ---
 name: freetoken-engine
-description: FreeToken, the MoE expert-offload engine — what it buys over llama.cpp, the version pin chain its install depends on, and every failure mode hit while running it. Reference material for adding it to lllm3090 as a second engine (phase 2); not currently installed. Use when working on FreeToken integration, when an offloaded-MoE model will not load, or when deciding whether a model needs offload at all.
+description: FreeToken, the MoE expert-offload engine — what it buys over llama.cpp, the version pin chain its install depends on, and every failure mode hit while running it. Reference material for adding it to lllm3090 as a second engine (phase 2); not currently installed. Use when working on FreeToken integration, when an offloaded-MoE model will not load, when deciding whether a model needs offload at all, or when asking whether a given checkpoint could be reached with more host RAM — the ceiling is RAM, not VRAM, and this box caps at 128 GB.
 ---
 
 # FreeToken (phase 2 — not currently installed)
@@ -23,6 +23,40 @@ resident.
 
 The cost is fragility. Everything in the next section is a pin, and taking the
 newest release of any of them breaks the build.
+
+## What it can and cannot reach on this box
+
+**The ceiling is host RAM, not VRAM.** Keeping experts in host RAM is the
+mechanism, so the largest checkpoint FreeToken can serve is bounded by what the
+machine can hold — and on this box that is a hard, low number:
+
+```
+installed                     32 GB  (~30 GB usable)
+ASRock X570M Pro4 maximum    128 GB  (4 x DDR4 DIMM, 32 GB per module)
+```
+
+DDR4 unbuffered non-ECC tops out at 32 GB per module, so 128 GB is the physical
+end of this board. 192 GB needs 48/64 GB DIMMs, which are DDR5 only — a new
+platform, not an upgrade.
+
+**The target category is 20-28 GB checkpoints**, not enormous ones. The measured
+case was Qwen3.6-35B-A3B-NVFP4: a 23.4 GB checkpoint with 18.19 GB of experts in
+host RAM, 148 tok/s and a 262k KV pool.
+
+**The payoff is context as much as capacity.** Moving experts out of VRAM frees
+that VRAM for KV cache, which rescues a specific failure llama.cpp cannot avoid:
+a checkpoint that loads but leaves no room to think in. `Ornith-1.5-35B-A3B` at
+21.7 GB is the live example — it fits a 24 GB card and leaves **5k tokens** of
+context, far under the 40k agent floor. Under FreeToken the experts leave VRAM
+and that space becomes the cache.
+
+**What is out of reach, and will stay out of reach.** DeepSeek-V4-Flash needs a
+147 GB expert pool. That does not fit in 30 GB, and it does not fit in 128 GB
+either, so maxing this board out does not reach it. Streaming the shortfall from
+NVMe is not a workaround: 3.46 GB fetched per token at ~7 GB/s is 0.5 s per
+token, about **2 tok/s**. It needs a 192 GB machine, where the pool sits inside
+the VRAM allocation and there is no offload at all — see
+`local-inference-hardware`. Do not re-derive this.
 
 ## The version pin chain
 

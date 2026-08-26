@@ -53,7 +53,12 @@
   #logbox .sep{color:#7d8f98;border-top:1px dashed #33454e;margin:.4rem 0;padding-top:.3rem}
   .dot{width:7px;height:7px;border-radius:99px;display:inline-block;background:var(--bad)}
   .dot.on{background:var(--ok)}
-  .cat{display:flex;flex-direction:column;gap:1.1rem;margin-top:.9rem}
+  .cat{display:flex;flex-direction:column;gap:1.1rem;margin-top:.9rem;
+    max-height:34rem;overflow-y:auto;padding-right:.4rem;
+    scrollbar-width:thin;overscroll-behavior:contain}
+  .cat::-webkit-scrollbar{width:8px}
+  .cat::-webkit-scrollbar-thumb{background:var(--rule);border-radius:99px}
+  .tag.vis{background:var(--rule)}
   .c{padding:.85rem .9rem;border:1px solid var(--rule);border-radius:6px}
   .c.no{opacity:.5}
   .chead{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
@@ -111,6 +116,13 @@
 const $ = id => document.getElementById(id);
 let sel = null, busy = false;
 
+function speedLabel(c){
+  // No figure at all is the honest state for an entry nobody has benched yet.
+  // Rendering it as "~null tok/s" would read as a broken panel.
+  if (c.expected_tok_s == null) return 'speed not measured';
+  return `~${c.expected_tok_s} tok/s`
+    + (c.verified ? (c.speed_applies ? ' (measured)' : ' (other card)') : '');
+}
 function fmtCtx(n){ return n >= 1024 ? Math.round(n/1024)+'k' : n; }
 
 async function refresh(){
@@ -171,7 +183,8 @@ async function refresh(){
         <div class="chead">
           <span class="nm">${c.name}</span>
           <span class="tag">${c.kind}</span>
-          <span class="meta">${c.gb} GB · ${fmtCtx(c.max_ctx)} × ${c.parallel} · ~${c.expected_tok_s} tok/s${c.verified ? (c.speed_applies ? ' (measured)' : ' (other card)') : ''}</span>
+          ${c.vision ? '<span class="tag vis">vision</span>' : ''}
+          <span class="meta">${c.gb} GB · ${fmtCtx(c.max_ctx)} × ${c.parallel} · ${speedLabel(c)}</span>
           <span class="cact" id="a-${c.id}"></span>
         </div>
         <div class="bar" id="b-${c.id}" style="display:none"><i></i></div>

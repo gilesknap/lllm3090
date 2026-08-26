@@ -12,6 +12,25 @@ It appears under **Installed** in the panel immediately — discovery is just "a
 directory containing at least one `.gguf`". Multi-part GGUFs work too: point at
 the directory and the engine loads the first shard, which pulls in the rest.
 
+## Vision
+
+Drop the model's projector into the same directory and it is picked up
+automatically — any GGUF whose name contains `mmproj` is treated as a projector
+rather than as weights, and the engine is started with `--mmproj`:
+
+```bash
+~/models/My-VLM/My-VLM-Q4_K_M.gguf
+~/models/My-VLM/mmproj-F16.gguf      # found and passed automatically
+```
+
+A projector alone is not a model: a directory holding only an `mmproj` file is
+ignored rather than served, because handing one to `--model` starts an engine
+that loads and then answers nothing useful.
+
+Note that the projector occupies VRAM alongside the weights. For catalogue
+entries that is accounted for; for your own GGUF, subtract it yourself when
+working out what context will fit.
+
 ## Context for an unknown model
 
 The catalogue carries a `default_ctx` for models it knows. For anything else the

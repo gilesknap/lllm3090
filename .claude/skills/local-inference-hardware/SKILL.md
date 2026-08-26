@@ -83,6 +83,35 @@ The corollary is worth stating plainly: **an offload engine is a workaround for
 not having enough unified memory.** Buy a box that holds the pool and the
 engine — and all the tuning around it — stops being necessary.
 
+## Where this project actually stands (26 August 2026)
+
+**Sticking with the current hardware through the initial testing phase.** The
+question of whether to spend anything is deferred until lllm3090 has shown it is
+useful in real work -- thoth first, then other projects. An upgrade *is* on the
+table after that, so the costings below are worth keeping current; they are just
+not a decision yet.
+
+What is being tested on, and what it caps at:
+
+```
+Ryzen 7 5800X, ASRock X570M Pro4, RTX 3090 24 GB
+32 GB DDR4 installed, 128 GB board maximum (4 x DDR4, 32 GB per module)
+```
+
+Two consequences worth carrying into any later conversation:
+
+- **128 GB is this platform's ceiling, and it is not enough for the top tier.**
+  48 and 64 GB DIMMs are DDR5 only, so 192 GB means a new board, CPU and memory
+  -- a replacement, not an upgrade. DeepSeek-V4-Flash needs 147 GB of experts,
+  so even a fully-populated X570M Pro4 does not reach it.
+- **The cheap intermediate step is real.** Two DIMM slots are free. Going to
+  64 GB is non-destructive and roughly doubles what an expert-offload engine
+  could hold -- see `freetoken-engine` for what that buys. Populating all four
+  AM4 slots usually forces a memory-speed drop, so 2 x 32 GB beats 4 x 16 GB.
+
+Judge a purchase against what the testing phase actually shows, not against what
+the catalogue could theoretically run.
+
 ## The upgrade-versus-replace test
 
 Run this before any RAM purchase, because the answer has changed:

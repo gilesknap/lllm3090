@@ -47,13 +47,25 @@ class Model:
     #: where a model's own template rejects something a client legitimately
     #: sends; see ``docs/explanations`` and the file's own comment for why.
     chat_template: str | None = None
+    #: Multimodal projector shipped alongside the weights in the same repo.
+    #: Present means the model can see images: the engine is given --mmproj,
+    #: and the projector is downloaded with the weights.
+    mmproj: str | None = None
+    #: The projector's size. It occupies VRAM like any other weights, so it is
+    #: counted against the budget -- otherwise the panel promises context that
+    #: the projector has already spent.
+    mmproj_gb: float = 0.0
     verified: bool = False
     notes: str = ""
     tags: list[str] = field(default_factory=list)
 
     @property
     def weights_mib(self) -> float:
-        return self.size_gb * 1000 * 1000 * 1000 / MIB
+        return (self.size_gb + self.mmproj_gb) * 1000 * 1000 * 1000 / MIB
+
+    @property
+    def vision(self) -> bool:
+        return self.mmproj is not None
 
 
 @dataclass(frozen=True)
@@ -182,12 +194,19 @@ def installed(models_dir: Path | None = None) -> list[dict[str, Any]]:
         ggufs = sorted(d.glob("*.gguf"))
         if not ggufs:
             continue
+        # A projector is a GGUF but not a checkpoint: handing it to --model
+        # starts an engine that loads and then answers nothing useful.
+        proj = [f for f in ggufs if "mmproj" in f.name.lower()]
+        weights = [f for f in ggufs if f not in proj]
+        if not weights:
+            continue
         # A multi-part GGUF is loaded by pointing at its first shard.
-        first = ggufs[0]
+        first = weights[0]
         out.append(
             {
                 "name": d.name,
                 "path": str(first),
+                "mmproj": str(proj[0]) if proj else None,
                 "gb": round(sum(f.stat().st_size for f in ggufs) / 1e9, 2),
             }
         )
@@ -214,7 +233,9 @@ def catalog_for_panel(desktop: bool = True) -> list[dict[str, Any]]:
                 "name": m.name,
                 "repo": m.repo,
                 "file": m.file,
-                "gb": m.size_gb,
+                # What you download and what occupies VRAM, projector included.
+                "gb": round(m.size_gb + m.mmproj_gb, 2),
+                "mmproj_gb": m.mmproj_gb,
                 "kind": m.kind,
                 "params": m.params,
                 "verified": m.verified,
@@ -224,6 +245,8 @@ def catalog_for_panel(desktop: bool = True) -> list[dict[str, Any]]:
                 "tags": m.tags,
                 "expected_tok_s": m.expected_tok_s,
                 "chat_template": m.chat_template,
+                "mmproj": m.mmproj,
+                "vision": m.vision,
                 "fits": f.fits,
                 "max_ctx": p.per_session,
                 "parallel": p.parallel,

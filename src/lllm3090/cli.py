@@ -123,7 +123,7 @@ def models() -> None:
                 f"{hardware.reference().name} and are shown for reference only."
             )
     typer.echo("")
-    header = f"{'MODEL':<24}{'SIZE':>8}{'KIND':>7}{'CONTEXT':>12}  {'STATE':<12}SPEED"
+    header = f"{'MODEL':<24}{'SIZE':>8}{'KIND':>10}{'CONTEXT':>12}  {'STATE':<12}SPEED"
     typer.echo(header)
     for row in catalog.catalog_for_panel():
         state = (
@@ -136,8 +136,9 @@ def models() -> None:
         ctx = (
             f"{row['max_ctx'] // 1024}k x{row['parallel']}" if row["fits"] else "-"
         )
+        kind = row["kind"] + ("+vis" if row["vision"] else "")
         typer.echo(
-            f"{row['name']:<24}{row['gb']:>7.1f}G{row['kind']:>7}{ctx:>12}  "
+            f"{row['name']:<24}{row['gb']:>7.1f}G{kind:>10}{ctx:>12}  "
             f"{state:<12}{speed}"
         )
 
@@ -224,7 +225,9 @@ def start(
             ctx = 32768 * parallel
     engine.stop()
     template = known.chat_template if known else None
-    ok, detail = engine.start(entry["path"], model, ctx, parallel, 300, template)
+    ok, detail = engine.start(
+        entry["path"], model, ctx, parallel, 300, template, entry.get("mmproj")
+    )
     typer.echo(detail)
     raise typer.Exit(0 if ok else 1)
 
