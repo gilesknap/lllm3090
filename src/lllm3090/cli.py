@@ -108,6 +108,7 @@ def install_engine(
 def models() -> None:
     """List the curated catalogue and what is already downloaded."""
     profile = hardware.detect()
+    desktop = hardware.graphical()
     if not profile.present:
         typer.echo("Card: none detected (nvidia-smi found no GPU)")
         typer.echo(
@@ -121,6 +122,20 @@ def models() -> None:
             typer.echo(
                 f"Context is computed for this card. Speeds were measured on a "
                 f"{hardware.reference().name} and are shown for reference only."
+            )
+    # Said only once a card has been established. With no GPU the capacity above
+    # is borrowed from the reference profile, and "the full card is available"
+    # would be describing a card that is not in this machine.
+    if profile.present:
+        if desktop:
+            typer.echo(
+                "Context is computed with a desktop session's VRAM held back. "
+                "See 'headless' in the docs\nfor how to get it back -- it is "
+                "worth up to three times the cache on some models."
+            )
+        else:
+            typer.echo(
+                "No desktop session: the full card is available for context."
             )
     typer.echo("")
     header = f"{'MODEL':<24}{'SIZE':>8}{'KIND':>10}{'CONTEXT':>12}  {'STATE':<12}SPEED"
@@ -218,12 +233,18 @@ def start(
     known = next((m for m in catalog.load_catalog() if m.name == model), None)
     if ctx is None:
         if known is not None:
-            p = catalog.plan(known, parallel)
+            p = catalog.plan(known, parallel, desktop=hardware.graphical())
             ctx, parallel = p.pool, p.parallel
             typer.echo(f"Context plan: {p.summary}")
         else:
             ctx = 32768 * parallel
+    # The plan plays against a fixed reserve; this is the measurement. Sizing
+    # for a text console and then starting under a desktop is the case that
+    # loads, reports itself healthy, and fails every request out of memory.
     engine.stop()
+    warning = catalog.free_vram_warning(known, ctx)
+    if warning:
+        typer.echo(warning)
     template = known.chat_template if known else None
     ok, detail = engine.start(
         entry["path"], model, ctx, parallel, 300, template, entry.get("mmproj")

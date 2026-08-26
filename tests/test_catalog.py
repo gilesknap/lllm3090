@@ -236,6 +236,122 @@ def test_a_directory_holding_only_a_projector_is_not_a_model(tmp_path):
     assert catalog.installed(models_dir=tmp_path) == []
 
 
+def test_linger_is_reported_honestly_when_it_cannot_be_determined(monkeypatch):
+    """A missing loginctl is not a failure; a definite "no" is.
+
+    The panel is a user unit, so without lingering it stops with the last
+    session -- including the moment you isolate to multi-user.target, which is
+    exactly when the headless how-to tells you to do it.
+    """
+    from lllm3090 import preflight
+
+    monkeypatch.setattr(preflight.shutil, "which", lambda _: None)
+    ok, msg = preflight.check_linger()
+    assert ok and "loginctl" in msg
+
+    monkeypatch.setattr(preflight.shutil, "which", lambda _: "/bin/loginctl")
+
+    class R:
+        stdout = "no\n"
+
+    monkeypatch.setattr(preflight.subprocess, "run", lambda *a, **k: R())
+    ok, msg = preflight.check_linger()
+    assert not ok, "lingering off must be reported as a problem"
+    assert "enable-linger" in msg, "the message must say how to fix it"
+
+
+def test_headless_never_offers_less_than_a_desktop():
+    """Freeing the compositor's VRAM can only add cache, never remove it."""
+    for m in catalog.load_catalog():
+        d = catalog.plan(m, desktop=True)
+        h = catalog.plan(m, desktop=False)
+        assert h.pool >= d.pool, f"{m.name} claims less with more VRAM free"
+        assert h.per_session >= d.per_session
+
+
+def test_an_unknown_session_is_assumed_to_be_a_desktop(monkeypatch):
+    """Guessing headless would hand out context the card does not have.
+
+    Both failure modes are silent, but they are not symmetric: over-reserving
+    costs context, while under-reserving produces an engine that loads, reports
+    itself healthy and fails every request.
+    """
+    from lllm3090 import hardware
+
+    monkeypatch.setattr(hardware.shutil, "which", lambda _: None)
+    assert hardware.graphical() is True
+
+    def boom(*a, **k):
+        raise OSError("systemctl exploded")
+
+    monkeypatch.setattr(hardware.shutil, "which", lambda _: "/bin/systemctl")
+    monkeypatch.setattr(hardware.subprocess, "run", boom)
+    assert hardware.graphical() is True
+
+
+def test_startup_cost_holds_back_the_workspace_the_plan_held_back():
+    """What must be free is what the plan reserved, not just what it allocates.
+
+    ``fit()`` subtracts the workspace -- and the vision tower's buffers on top
+    of it -- before deciding on a context, so a check that compares free VRAM
+    against the load alone approves a plan the card cannot serve.
+    """
+    for m in catalog.load_catalog():
+        held = config.WORKSPACE_RESERVE_MIB
+        if m.vision:
+            held += config.VISION_WORKSPACE_RESERVE_MIB
+        loaded = catalog.vram_needed_mib(m, 65536)
+        assert catalog.startup_vram_mib(m, 65536) == loaded + held
+
+
+def test_the_gap_between_loading_and_serving_is_warned_about(monkeypatch):
+    """The regression: free VRAM above the load and below the requirement.
+
+    This is not a corner case, it is the shape of the failure -- the engine
+    loads, reports itself healthy, and then fails every request out of device
+    memory, because the room it needed to work in was never there.
+    """
+    m = next(x for x in catalog.load_catalog() if x.vision)
+    ctx = 65536
+    loaded = catalog.vram_needed_mib(m, ctx)
+    required = catalog.startup_vram_mib(m, ctx)
+    assert required > loaded, "a vision model must hold back workspace"
+
+    between = int((loaded + required) / 2)
+    monkeypatch.setattr(catalog.hardware, "free_vram_mib", lambda: between)
+    warning = catalog.free_vram_warning(m, ctx)
+    assert warning is not None, "a plan that loads and then starves is a warning"
+    assert f"{required / 1024:.1f} GB" in warning, (
+        "the warning must quote what serving needs, not what loading needs"
+    )
+
+    monkeypatch.setattr(
+        catalog.hardware, "free_vram_mib", lambda: int(required) + 1024
+    )
+    assert catalog.free_vram_warning(m, ctx) is None, "room to spare is not news"
+
+
+def test_nothing_is_claimed_when_the_card_cannot_be_measured(monkeypatch):
+    """No nvidia-smi is no measurement, and a guess here would be a false alarm
+    on every start on a machine without one."""
+    m = catalog.load_catalog()[0]
+    monkeypatch.setattr(catalog.hardware, "free_vram_mib", lambda: None)
+    assert catalog.free_vram_warning(m, 65536) is None
+    monkeypatch.setattr(catalog.hardware, "free_vram_mib", lambda: 1)
+    assert catalog.free_vram_warning(None, 65536) is None, (
+        "an uncatalogued GGUF has no known cache cost to compare against"
+    )
+
+
+def test_vram_needed_counts_the_projector_and_the_q8_cache():
+    m = next(x for x in catalog.load_catalog() if x.vision)
+    bare = catalog.vram_needed_mib(m, 0)
+    assert bare == m.weights_mib, "no cache should cost only the weights"
+    # A q8 cache is half the f16 figure the catalogue stores.
+    grown = catalog.vram_needed_mib(m, 2048) - bare
+    assert grown == 2048 * (m.kv_kib_per_token / 2) / 1024
+
+
 # --- hardware profiles ------------------------------------------------------
 # The point of profiles is that the arithmetic travels to cards nobody here
 # owns. These are the tests that can be written without one.

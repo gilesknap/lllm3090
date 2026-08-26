@@ -74,6 +74,7 @@ def status():
             "vram_gb": round(profile.vram_mib / 1024),
             "measured": profile.measured,
             "present": profile.present,
+            "desktop": hardware.graphical(),
             "reference": hardware.reference().name,
         },
         "engine": engine.status(),
@@ -101,7 +102,7 @@ async def start(model: str, ctx: int | None = None, parallel: int | None = None)
     known = next((m for m in catalog.load_catalog() if m.name == model), None)
     if ctx is None:
         if known is not None:
-            p = catalog.plan(known, parallel)
+            p = catalog.plan(known, parallel, desktop=hardware.graphical())
             ctx, parallel = p.pool, p.parallel
         else:
             # An unknown GGUF: no KV figure to plan with, so be conservative.
@@ -109,14 +110,23 @@ async def start(model: str, ctx: int | None = None, parallel: int | None = None)
 
     async with _busy:
         await asyncio.to_thread(engine.stop)
+        # Measured with the outgoing engine already gone, so its VRAM is not
+        # charged against its replacement. The panel is as able as the console
+        # to start a plan the card cannot serve, so it makes the same check.
+        warning = await asyncio.to_thread(catalog.free_vram_warning, known, ctx)
         # wait=0: launch and return. A load takes minutes; blocking here would
         # freeze the panel and hang systemd's stop until it SIGKILLs us.
         ok, detail = await asyncio.to_thread(
             engine.start, entry["path"], model, ctx, parallel, 0,
             known.chat_template if known else None, entry.get("mmproj"),
         )
+        if warning:
+            # Ahead of the detail rather than after it: the engine reports a
+            # successful launch either way, and that is the line this warning
+            # exists to qualify.
+            detail = f"{warning}\n{detail}"
         _last.update(action=f"start {model}", ok=ok, detail=detail[-400:])
-    return {"ok": ok, "detail": _last["detail"]}
+    return {"ok": ok, "detail": _last["detail"], "warning": warning}
 
 
 @app.post("/api/stop")

@@ -216,7 +216,69 @@ def installed(models_dir: Path | None = None) -> list[dict[str, Any]]:
     return out
 
 
-def catalog_for_panel(desktop: bool = True) -> list[dict[str, Any]]:
+def vram_needed_mib(model: Model, ctx: int) -> float:
+    """Roughly what a pool of ``ctx`` tokens costs, weights and projector included.
+
+    The q8 cache halves the per-token figure, which is stored at f16.
+    """
+    return model.weights_mib + ctx * (model.kv_kib_per_token / 2) / 1024
+
+
+def startup_vram_mib(model: Model, ctx: int) -> float:
+    """What the card must have free for this plan to load *and keep serving*.
+
+    ``vram_needed_mib`` is what the load itself allocates. The engine then needs
+    room to work in on top of that -- the compute buffers and fragmentation
+    headroom ``fit()`` holds back out of the budget, and the vision tower's own
+    buffers when a projector is loaded. Both are already subtracted when the
+    plan is computed, so a check that compares only the load against free VRAM
+    passes plans that load and then fail every request, which is the exact
+    failure the check exists to catch.
+
+    The desktop reserve is deliberately *not* added: free VRAM is a measurement,
+    and a compositor that is running has already taken its share out of it.
+    """
+    needed = vram_needed_mib(model, ctx)
+    needed += config.WORKSPACE_RESERVE_MIB
+    if model.vision:
+        needed += config.VISION_WORKSPACE_RESERVE_MIB
+    return needed
+
+
+def free_vram_warning(model: Model | None, ctx: int) -> str | None:
+    """Warn if the card cannot hold this plan *now*, or ``None`` if it can.
+
+    The plan is computed against fixed reserves, which describe a machine at
+    rest. This is the measurement, and it is what catches the estimate being
+    wrong: a model sized on a text console and started under a desktop, or
+    started beside anything else holding VRAM, loads and reports itself healthy
+    before failing every request out of device memory.
+
+    Both front ends have to make this check -- an engine started from the panel
+    is the same engine on the same card as one started from the console -- so
+    the comparison and its wording live here rather than at each call site.
+    Call it after ``engine.stop()``, or the outgoing engine's VRAM is counted
+    as used against its own replacement.
+    """
+    if model is None:
+        # Nothing is known about an uncatalogued GGUF's cache cost, so there is
+        # no requirement to compare it against.
+        return None
+    free = hardware.free_vram_mib()
+    if free is None:
+        return None
+    needed = startup_vram_mib(model, ctx)
+    if needed <= free:
+        return None
+    return (
+        f"Warning: this plan needs about {needed / 1024:.1f} GB and only "
+        f"{free / 1024:.1f} GB is free. The engine may load and then fail every "
+        "request. Close what is using the GPU, run headless, or ask for a "
+        "smaller context."
+    )
+
+
+def catalog_for_panel(desktop: bool | None = None) -> list[dict[str, Any]]:
     """Catalogue entries decorated with fit, plan and installed-state, for the UI.
 
     ``speed_applies`` is false when the GPU in this machine is not the one the
@@ -226,6 +288,8 @@ def catalog_for_panel(desktop: bool = True) -> list[dict[str, Any]]:
     """
     have = {m["name"] for m in installed()}
     profile = hardware.detect()
+    if desktop is None:
+        desktop = hardware.graphical()
     rows = []
     for m in load_catalog():
         f = fit(m, desktop, profile)
@@ -251,6 +315,7 @@ def catalog_for_panel(desktop: bool = True) -> list[dict[str, Any]]:
                 "mmproj": m.mmproj,
                 "vision": m.vision,
                 "fits": f.fits,
+                "desktop": desktop,
                 "max_ctx": p.per_session,
                 "parallel": p.parallel,
                 "pool": p.pool,
