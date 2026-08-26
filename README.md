@@ -71,6 +71,11 @@ runs. `lllm3090 bench` is how another card gets real numbers of its own; see
 
 <https://gilesknap.github.io/lllm3090>
 
+If you are weighing this against Ollama, LM Studio or `llama-swap`, that
+comparison is written down: [what else is out there, and what this does that
+they do not](https://gilesknap.github.io/lllm3090/explanations/landscape.html)
+— including when you should use one of them instead.
+
 ## The panel
 
 ![The lllm3090 control panel](docs/images/panel.png)
