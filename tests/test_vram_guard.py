@@ -1,10 +1,10 @@
-"""Both front ends must refuse to start a plan quietly when the card is full.
+"""Every front end must refuse to start a plan quietly when the card is full.
 
 The plan is computed against fixed reserves, which describe a machine at rest.
 What the card actually has free is a measurement, and when the two disagree the
 engine loads, reports itself healthy, and fails every request out of device
-memory. The console and the panel start the same engine on the same card, so a
-guard on one of them and not the other is not a guard at all.
+memory. The console, the panel and the terminal UI start the same engine on the
+same card, so a guard on some of them and not the others is not a guard at all.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
-from lllm3090 import catalog, cli, engine, hardware, panel
+from lllm3090 import catalog, cli, engine, hardware, panel, tui
 
 runner = CliRunner()
 
@@ -51,6 +51,18 @@ def test_the_panel_says_so(starved):
     assert body["warning"], "the panel must not start a starved plan silently"
     assert "Warning:" in body["detail"]
     assert "engine started" in body["detail"], "the launch result is still reported"
+
+
+def test_the_terminal_ui_says_so(starved):
+    """The local fallback -- the path taken when no panel is running.
+
+    With a panel up the TUI posts to it and inherits the warning in the reply;
+    without one it starts the engine in this process, and there is nothing
+    upstream of it to make the check.
+    """
+    control = tui.Control()
+    control.reachable = False
+    assert "Warning:" in control.start(MODEL)
 
 
 def test_a_card_with_room_is_not_nagged(monkeypatch):

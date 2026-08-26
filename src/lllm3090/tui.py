@@ -168,13 +168,17 @@ class Control:
         known = next((m for m in catalog.load_catalog() if m.name == model), None)
         p = catalog.launch_plan(model)
         engine.stop()
+        # After the stop, so the outgoing engine's VRAM is not charged against
+        # its own replacement. This path starts the same engine on the same
+        # card as the console and the panel, so it owes the same warning.
+        warning = catalog.free_vram_warning(known, p.pool)
         # wait=0, exactly as the panel does it: a load takes minutes, and a UI
         # that stops repainting for the duration looks like a UI that has hung.
         _, detail = engine.start(
             entry["path"], model, p.pool, p.parallel, 0,
             known.chat_template if known else None, entry.get("mmproj"),
         )
-        return detail
+        return f"{warning}\n{detail}" if warning else detail
 
     def stop(self) -> str:
         if self.reachable:

@@ -333,6 +333,9 @@ def test_starting_a_model_without_the_panel_uses_the_pool_the_panel_would(
         engine, "start",
         lambda *args: launched.append(args) or (True, "starting Qwen3-8B"),
     )
+    # A card with room, so the free-VRAM guard has nothing to say and this test
+    # is about the plan rather than about whatever is on the GPU right now.
+    monkeypatch.setattr(catalog.hardware, "free_vram_mib", lambda: 1024 * 1024)
     control = tui.Control("http://127.0.0.1:1")
     control.reachable = False
     detail = control.start("Qwen3-8B")
