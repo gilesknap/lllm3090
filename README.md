@@ -27,13 +27,16 @@ It touches nothing outside `$HOME` except `libvulkan1`, and downloads **no model
 weights** — you pick those from the panel.
 
 Then open <http://127.0.0.1:8080>, download `Qwen3-8B` (5 GB) to prove the
-install works, and `Qwen3.8-27B` (15 GB) for real use.
+install works, and `Qwen3.6-35B-A3B` (17.7 GB) for real use — at 126 tok/s
+it is the fastest model that also reaches a full 262k context, which is what
+agentic work needs. `gpt-oss-20b` decodes faster still, at 160, in half the
+room.
 
 ## Use
 
 ```bash
 lllm3090 models          # what exists, what fits, what is downloaded
-lllm3090 start Qwen3.8-27B
+lllm3090 start Qwen3.6-35B-A3B
 lllm3090 status
 lllm3090 claude          # launch Claude Code against the local model
 lllm3090 stop            # free the VRAM
