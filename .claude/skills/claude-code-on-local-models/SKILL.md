@@ -43,7 +43,9 @@ Claude Code's system prompt and tool definitions are **~40k tokens on every
 turn**, before any of your work. Consequences:
 
 - A KV allocation under ~60k tokens cannot run the harness at all — the first
-  message dies with `Prompt is too long`.
+  message dies with `Prompt is too long`. Worth enforcing in tooling rather
+  than discovering: refuse to launch below the floor and name the models that
+  would work, instead of letting the failure happen inside the harness.
 - "The model supports 262k context" is a statement about RoPE, not about what is
   served. The KV allocation is the ceiling.
 - Sizing a card for agentic work means sizing the KV cache first and giving the
@@ -73,6 +75,20 @@ Doubling the pool while leaving the reported context alone changed CC's
 behaviour not at all and let two 60k sessions overlap (35.7 s, previously
 serialised) for −5.3% throughput on short prompts and −1.1% at 40k. On a card
 that is not expert-cache-bound this is close to free.
+
+## A chat template can reject the client outright
+
+Before blaming the model for a 500, check its chat template. Qwen-family
+templates raise on a system message that is not first:
+
+```jinja
+{{- raise_exception('System message must be at the beginning.') }}
+```
+
+Agent harnesses legitimately send one mid-conversation, so every request after
+the first fails, and the Jinja traceback names neither the client nor the cause.
+Grep a new model's template for `raise_exception` before assuming the model is
+at fault; serving it with a patched template is a one-line change.
 
 ## Context is the constraint, not tokens per second
 

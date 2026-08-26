@@ -1,6 +1,6 @@
 ---
 name: moe-throughput-model
-description: Predict decode tokens/sec for an offloaded-MoE model before downloading it or buying hardware — expert bytes fetched per token, what the cache-hit fraction is really worth, and which link (VRAM, PCIe, system RAM) is the actual roof. Use when asked how fast a model will run on a given box, when sizing RAM or VRAM or costing a new machine for local inference, when a model fits but you need to know whether it is usable, or when measured throughput is far from what you expected.
+description: Predict decode tokens/sec before downloading a model or buying hardware, and know which of two regimes you are in — experts crossing PCIe from host RAM, or a checkpoint resident in VRAM, where the same formula under-predicts by 2-5x — expert bytes fetched per token, what the cache-hit fraction is really worth, and which link (VRAM, PCIe, system RAM) is the actual roof. Use when asked how fast a model will run on a given box, when sizing RAM or VRAM or costing a new machine for local inference, when a model fits but you need to know whether it is usable, or when measured throughput is far from what you predicted.
 ---
 
 # What will it actually run at?
@@ -11,9 +11,26 @@ from a 150 GB download or a £10k purchase.
 
 Decode is memory-bound, so the whole estimate is **bytes moved per token divided
 by the bandwidth of the slowest link they cross**. Everything below is that one
-idea.
+idea — but *which* link is the slowest is the whole question, and getting it
+wrong is worth a factor of five.
 
-## The arithmetic
+## First decide which case you are in
+
+```
+Does the whole checkpoint fit in VRAM?
+├── no, experts live in host RAM   → the PCIe formula below. Roof ~26 GB/s.
+└── yes, everything is resident    → the roof is VRAM bandwidth, not PCIe.
+                                     dense:        ~60% of roofline
+                                     resident MoE: ~33% of roofline
+```
+
+**Applying the offload formula to a resident model under-predicts by 2-5x.**
+That is not a hypothetical: it happened here, to four models out of five, and
+hid behind a "±30%" caveat for weeks. The measured evidence is in
+[Correction](#correction-this-model-is-for-offloaded-moe-only) below; read it
+before using anything above it.
+
+## The arithmetic (offloaded MoE only)
 
 ```
 expert_bytes  = 3 × moe_intermediate_size × hidden_size × bytes_per_weight   (gate, up, down)
@@ -114,7 +131,7 @@ GEMMs are small and the kernel spends proportionally more time not moving
 weights. **Use 60% of roofline for dense and 33% for resident MoE**, and reserve
 the PCIe formula for models whose experts genuinely live in host RAM.
 
-## Worked example: a model that fits and is still unusable
+## Worked example (offloaded): a model that fits and is still unusable
 
 DeepSeek-V4-Flash — top-6, 43 layers, moe_intermediate 2048, hidden 4096, FP4
 experts, a 147 GB expert pool:
