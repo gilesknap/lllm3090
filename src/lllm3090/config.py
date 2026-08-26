@@ -49,6 +49,34 @@ DESKTOP_RESERVE_MIB = 2400
 #: Compute buffers, CUDA/Vulkan graphs and fragmentation headroom.
 WORKSPACE_RESERVE_MIB = 1024
 
+#: VRAM the driver holds back before any process allocates a byte: page tables,
+#: the console framebuffer, and the card's own bookkeeping. ``nvidia-smi``
+#: reports it as ``memory.reserved`` and it is *not* part of what a process can
+#: claim, so a budget computed from the nameplate capacity overstates the card
+#: by exactly this much.
+#:
+#: Measured at 451 MiB on the 3090 here, on a text console with nothing else
+#: running. Leaving it out is what let a plan of 2 x 262144 tokens be issued
+#: with 52 MiB of margin against a card that had already given 451 away: the
+#: engine loaded, prefill degraded from 88 to 21 tok/s over three batches as
+#: compute buffers fought for room that was not there, and the run ended in
+#: ``vk::DeviceLostError`` with the GPU spinning at 100% and zero memory
+#: traffic. This is the fallback for a profile that is not the running card;
+#: ``hardware.detect`` substitutes the live figure when nvidia-smi reports one.
+DRIVER_RESERVE_MIB = 512
+
+#: What a token of KV cache really costs, against the nominal
+#: ``kv_kib_per_token``. The nominal figure is the tensor arithmetic; llama.cpp
+#: also carries per-cell bookkeeping and allocates the pool whole at load, so
+#: resident cost runs above it.
+#:
+#: Measured on Gemma-4-26B-A4B at two pool sizes 344k tokens apart: solving the
+#: two peaks for a fixed cost plus a per-token cost gives 11.2 KiB/token against
+#: a nominal 10, and the implied fixed cost agreed between the two runs to
+#: within 1 MiB. Without this, a plan sized to the last byte of the nominal
+#: cache overruns the card by 12% of the pool.
+KV_OVERHEAD_FACTOR = 1.12
+
 #: Extra VRAM held back when a multimodal projector is loaded, on top of the
 #: workspace reserve above. The vision tower needs its own compute buffers, and
 #: they are not the projector file's size: measured on a 3090, Gemma-4-26B-A4B's
