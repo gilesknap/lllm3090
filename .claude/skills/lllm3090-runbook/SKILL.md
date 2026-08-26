@@ -43,6 +43,7 @@ lllm3090 start <Name> [--ctx N] [--parallel N]
 lllm3090 stop                      # frees the VRAM; do this before gaming
 lllm3090 status
 lllm3090 claude                    # Claude Code against the local model
+lllm3090 bench <Name>              # llama-bench, and a profile block to contribute
 ```
 
 The panel at `http://127.0.0.1:8080` does the same and streams the engine log.
@@ -110,6 +111,14 @@ why. Use the pidfile.
 ## Before you measure anything
 
 On a single-GPU box the benchmark and the workload are the same machine.
+
+- **A speed is a fact about one card.** `data/profiles.yaml` carries capacity
+  and compute capability per GPU; the running card is matched **by name**, and
+  an unrecognised one gets a profile synthesised from `nvidia-smi` so fit and
+  context stay correct while nothing claims its speed. With no GPU at all the
+  profile is `present=False`, and the CLI and panel say so. Speeds are never
+  scaled between cards -- a bandwidth ratio produces a guess that prints like a
+  measurement. `lllm3090 bench` is the only way a card gets real numbers.
 
 - **Check the served model before *and* after each run** (`/v1/models`). The
   engine ignores the `model` field in a request and serves whatever is loaded,
