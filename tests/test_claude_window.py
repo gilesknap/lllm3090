@@ -33,6 +33,10 @@ def launched(monkeypatch):
         return 0
 
     monkeypatch.setattr(cli.subprocess, "call", fake_call)
+    # `claude` on PATH, because these tests are about the window handed to it
+    # and not about whether the machine running them has Claude Code installed.
+    # Without this they pass on a developer's box and fail on every runner.
+    monkeypatch.setattr(cli.shutil, "which", lambda name: f"/usr/bin/{name}")
     return seen
 
 
