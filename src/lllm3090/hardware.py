@@ -36,6 +36,10 @@ class Profile:
     #: True when this was synthesised from an unrecognised GPU rather than
     #: matched against the shipped list.
     detected: bool = False
+    #: False when no GPU could be found at all and the capacity is borrowed so
+    #: the catalogue can still be inspected. Nothing about such a profile
+    #: describes a card in this machine.
+    present: bool = True
 
     def usable_vram_mib(self, desktop: bool = True) -> int:
         """VRAM available for weights plus KV cache."""
@@ -48,6 +52,11 @@ class Profile:
 def load_profiles() -> list[Profile]:
     raw = resources.files("lllm3090.data").joinpath("profiles.yaml").read_text()
     return [Profile(**p) for p in yaml.safe_load(raw)["profiles"]]
+
+
+def _normalise(name: str) -> str:
+    """A GPU name reduced to what can be compared across nvidia-smi versions."""
+    return "".join(c for c in name.lower() if c.isalnum())
 
 
 def _smi(query: str) -> str | None:
@@ -69,8 +78,10 @@ def detect() -> Profile:
     marked ``detected`` and never ``measured``: its capacity is known, so fit
     and context are computed correctly, while nothing claims its speed.
 
-    With no GPU at all -- CI, a container -- this falls back to the reference
-    profile so the catalogue can still be inspected.
+    With no GPU at all -- CI, a container -- capacity is borrowed from the
+    reference profile so the catalogue can still be inspected, but the profile
+    is marked ``present=False`` and never ``measured``: there is no card here,
+    so nothing may be said about how fast one would be.
     """
     name = _smi("name")
     cap = _smi("compute_cap")
@@ -78,12 +89,29 @@ def detect() -> Profile:
     profiles = load_profiles()
 
     if name is None or total is None:
-        return next(p for p in profiles if p.id == config.REFERENCE_PROFILE)
+        ref = next(p for p in profiles if p.id == config.REFERENCE_PROFILE)
+        return Profile(
+            id="no-gpu",
+            name="no GPU detected",
+            compute_capability="unknown",
+            vram_mib=ref.vram_mib,
+            bandwidth_gbs=0,
+            measured=False,
+            notes=(
+                "nvidia-smi reported no GPU. Capacity is borrowed from the "
+                f"{ref.name} so the catalogue can be inspected; none of these "
+                "figures describes a card in this machine."
+            ),
+            present=False,
+        )
 
     vram = int(total)
     for p in profiles:
-        # Capacity is what the arithmetic needs, so match on it; compute
-        # capability disambiguates cards that share a size.
+        # The name is what identifies the card. A 3090 Ti carries the same 24
+        # GiB and the same compute capability as a 3090 and is not the card the
+        # speeds were taken on, so capacity alone must not claim a match.
+        if _normalise(p.name) != _normalise(name):
+            continue
         same_size = abs(p.vram_mib - vram) <= 512
         if same_size and (cap is None or p.compute_capability == cap):
             return p

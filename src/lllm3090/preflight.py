@@ -54,9 +54,7 @@ def check_gpu() -> tuple[bool, str]:
     and the message says so rather than implying the whole thing is wrong.
     """
     profile = hardware.detect()
-    if profile.name == hardware.reference().name and profile.id == "detected":
-        return False, "nvidia-smi not found or no GPU visible"
-    if _smi("name") is None:
+    if not profile.present:
         return False, "nvidia-smi not found or no GPU visible"
 
     summary = (

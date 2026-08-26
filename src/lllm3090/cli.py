@@ -108,12 +108,20 @@ def install_engine(
 def models() -> None:
     """List the curated catalogue and what is already downloaded."""
     profile = hardware.detect()
-    typer.echo(f"Card: {profile.name} ({profile.vram_mib // 1024} GB)")
-    if not profile.measured:
+    if not profile.present:
+        typer.echo("Card: none detected (nvidia-smi found no GPU)")
         typer.echo(
-            f"Context is computed for this card. Speeds were measured on a "
-            f"{hardware.reference().name} and are shown for reference only."
+            f"Context below is computed against a {hardware.reference().name}'s "
+            f"{profile.vram_mib // 1024} GB so the catalogue can be read; it "
+            "describes no card in this machine, and neither do the speeds."
         )
+    else:
+        typer.echo(f"Card: {profile.name} ({profile.vram_mib // 1024} GB)")
+        if not profile.measured:
+            typer.echo(
+                f"Context is computed for this card. Speeds were measured on a "
+                f"{hardware.reference().name} and are shown for reference only."
+            )
     typer.echo("")
     header = f"{'MODEL':<24}{'SIZE':>8}{'KIND':>7}{'CONTEXT':>12}  {'STATE':<12}SPEED"
     typer.echo(header)
@@ -166,7 +174,8 @@ def bench(
 
     typer.echo("\n--- paste this into an issue at")
     typer.echo("--- https://github.com/gilesknap/lllm3090/issues\n")
-    typer.echo(f"""  - id: {profile.id if not profile.detected else "CHOOSE-AN-ID"}
+    known = profile.present and not profile.detected
+    typer.echo(f"""  - id: {profile.id if known else "CHOOSE-AN-ID"}
     name: {profile.name}
     compute_capability: "{profile.compute_capability}"
     vram_mib: {profile.vram_mib}

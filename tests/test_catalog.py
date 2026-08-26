@@ -174,6 +174,37 @@ def test_exactly_one_profile_carries_the_measurements():
     assert measured[0].id == config.REFERENCE_PROFILE
 
 
+def test_a_card_sharing_a_size_is_not_mistaken_for_the_measured_one(monkeypatch):
+    """A 3090 Ti is 24 GiB at compute 8.6 and is still not the reference card.
+
+    Matching on capacity alone would hand it the rtx-3090 profile and print its
+    speeds as measurements taken on the card in front of you.
+    """
+    from lllm3090 import hardware
+
+    monkeypatch.setattr(hardware, "_smi", lambda q: {
+        "name": "NVIDIA GeForce RTX 3090 Ti", "compute_cap": "8.6",
+        "memory.total": "24576",
+    }.get(q))
+    p = hardware.detect()
+    assert p.id != config.REFERENCE_PROFILE
+    assert p.detected and not p.measured
+    assert p.vram_mib == 24576
+
+
+def test_no_gpu_does_not_borrow_the_reference_card_s_measurements(monkeypatch):
+    """With no GPU, capacity may be borrowed to read the catalogue; speed may not."""
+    from lllm3090 import hardware
+
+    monkeypatch.setattr(hardware, "_smi", lambda q: None)
+    p = hardware.detect()
+    assert not p.present, "a machine with no GPU must not report one"
+    assert not p.measured, "no card here, so no figure was measured on it"
+    assert p.vram_mib == hardware.reference().vram_mib
+    # The catalogue is still inspectable, which is the whole point of the fallback.
+    assert catalog.load_catalog()
+
+
 def test_an_unknown_card_is_honest_rather_than_absent(monkeypatch):
     """An unrecognised GPU must still compute fit, and must not claim speed."""
     from lllm3090 import hardware

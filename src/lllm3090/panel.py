@@ -73,6 +73,7 @@ def status():
             "name": profile.name,
             "vram_gb": round(profile.vram_mib / 1024),
             "measured": profile.measured,
+            "present": profile.present,
             "reference": hardware.reference().name,
         },
         "engine": engine.status(),

@@ -44,6 +44,18 @@ Not an error. `lllm3090` builds a profile from what `nvidia-smi` reports, so fit
 and context are computed correctly from real memory, and marks it as unmeasured
 so no speed is claimed for it.
 
+A card is recognised by **name**, not by size. An RTX 3090 Ti carries the same
+24 GB at the same compute capability as the 3090 every figure here was measured
+on, and is still a different card — so it gets a profile of its own rather than
+inheriting measurements taken on something else.
+
+## No card at all
+
+In CI or a container with no GPU, the catalogue is still readable: capacity is
+borrowed from the RTX 3090 so the fit arithmetic has something to work with.
+The profile is marked as absent, and the CLI and panel both say plainly that
+nothing shown describes a card in that machine.
+
 ## Contributing numbers for your card
 
 ```bash
