@@ -77,6 +77,13 @@ comparison is written down: [what else is out there, and what this does that
 they do not](https://gilesknap.github.io/lllm3090/explanations/landscape.html)
 — including when you should use one of them instead.
 
+## Contributing
+
+Pull requests are welcome, including small ones — a model that works, a speed
+measured on a card nobody here owns. [CONTRIBUTING.md](CONTRIBUTING.md) has the
+setup, the three commands CI runs, and how to add a catalogue entry. No GPU is
+needed to work on this; the test suite runs without one.
+
 ## The panel
 
 ![The lllm3090 control panel](docs/images/panel.png)
