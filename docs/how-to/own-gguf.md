@@ -8,9 +8,10 @@ mkdir -p ~/models/My-Model
 mv My-Model-Q4_K_M.gguf ~/models/My-Model/
 ```
 
-It appears under **Installed** in the panel immediately — discovery is just "a
-directory containing at least one `.gguf`". Multi-part GGUFs work too: point at
-the directory and the engine loads the first shard, which pulls in the rest.
+It appears in the panel's list immediately, at the top under **on disk** and
+tagged `gguf` — discovery is just "a directory containing at least one
+`.gguf`". Multi-part GGUFs work too: point at the directory and the engine
+loads the first shard, which pulls in the rest.
 
 ## Vision
 

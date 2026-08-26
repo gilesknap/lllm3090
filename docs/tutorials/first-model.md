@@ -2,12 +2,16 @@
 
 ## Prove the install with a small one
 
-Open <http://127.0.0.1:8080>. Under **Available to download**, pick
-**Qwen3-8B** — 5 GB, so you find out the download and serve path works without
-waiting for 15 GB.
+Open <http://127.0.0.1:8080>. The panel shows one list of every model, with
+the ones already on this disk at the top under **on disk** and the rest under
+**available**. Find **Qwen3-8B** — 5 GB, so you find out the download and
+serve path works without waiting for 15 GB — and press **Get**.
 
-Progress streams in the panel. When it finishes it moves to **Installed**;
-select it and press **Start**.
+Progress streams under its row. When it finishes the row moves up into **on
+disk** and its button becomes **Start**; press that.
+
+Clicking a row's name opens what it is and what it is for, which is worth
+reading before you spend 17 GB on one of the larger ones.
 
 Watch the engine log at the bottom of the panel. A first load looks like:
 
