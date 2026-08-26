@@ -113,7 +113,7 @@ async def start(model: str, ctx: int | None = None, parallel: int | None = None)
         # freeze the panel and hang systemd's stop until it SIGKILLs us.
         ok, detail = await asyncio.to_thread(
             engine.start, entry["path"], model, ctx, parallel, 0,
-            known.chat_template if known else None,
+            known.chat_template if known else None, entry.get("mmproj"),
         )
         _last.update(action=f"start {model}", ok=ok, detail=detail[-400:])
     return {"ok": ok, "detail": _last["detail"]}

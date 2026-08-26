@@ -17,12 +17,7 @@ RestartSec=5
 # cgroup, so with the default KillMode=control-group systemd killed the engine
 # anyway, and the next request got "connection refused" with no clue why.
 #
-# The documented downside of KillMode=process
-
-# Nothing in the panel should take long to stop now that starts do not block,
-# but 90s of an unresponsive service while systemd waits is worse than a
-# hard stop.
-TimeoutStopSec=15 is that it can leave processes
+# The documented downside of KillMode=process is that it can leave processes
 # behind. Here that is the point: `lllm3090 stop` owns the engine's lifetime.
 KillMode=process
 
