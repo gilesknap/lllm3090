@@ -439,19 +439,24 @@ def claude(
         typer.echo(f"Nothing is answering on {config.ENGINE_URL}. Start a model first.")
         raise typer.Exit(1)
     model = state["model"] or "local"
-    known = next((m for m in catalog.load_catalog() if m.name == model), None)
     # Claude Code must be told the PER-CONVERSATION window, not the pool. Tell it
     # the pool and it will happily fill the whole thing, leaving nothing for the
-    # subagents that share it.
-    window = str(catalog.plan(known).per_session if known else 32768)
+    # subagents that share it. Ask launch_plan rather than plan: it is what sized
+    # the running engine, so this number and the engine's cannot disagree about
+    # whether a desktop is holding VRAM. Computing it here with plan's defaults
+    # capped the agent at the desktop window while the engine served the larger
+    # console one.
+    window = str(catalog.launch_plan(model).per_session)
     # A window that cannot hold the harness's own prompt is not a small window,
     # it is a broken session: the first message fails with "prompt is too long".
     # Say so here rather than let the user discover it inside Claude Code.
     if int(window) <= config.AGENT_PROMPT_FLOOR and not force:
+        desktop = hardware.graphical()
         alternatives = [
-            f"{m.name} ({catalog.plan(m).per_session // 1024}k)"
+            f"{m.name} ({catalog.plan(m, desktop=desktop).per_session // 1024}k)"
             for m in catalog.load_catalog()
-            if catalog.plan(m).per_session > config.AGENT_PROMPT_FLOOR * 1.5
+            if catalog.plan(m, desktop=desktop).per_session
+            > config.AGENT_PROMPT_FLOOR * 1.5
         ]
         typer.echo(
             f"{model} serves {int(window) // 1024}k per conversation, but Claude "
