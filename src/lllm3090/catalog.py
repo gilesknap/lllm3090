@@ -17,7 +17,7 @@ from typing import Any
 
 import yaml
 
-from . import config
+from . import config, hardware
 
 #: Bytes per KiB/MiB, spelled out so the arithmetic below reads unambiguously.
 MIB = 1024 * 1024
@@ -94,7 +94,9 @@ class Plan:
         )
 
 
-def fit(model: Model, desktop: bool = True) -> Fit:
+def fit(
+    model: Model, desktop: bool = True, profile: hardware.Profile | None = None
+) -> Fit:
     """Compute the context a model leaves room for on the target card.
 
     The KV cache is what actually decides context, and it is compressible: the
@@ -102,7 +104,8 @@ def fit(model: Model, desktop: bool = True) -> Fit:
     cost and are close to lossless. ``q4_0`` would halve it again but degrades
     long-context reasoning, so it is deliberately not offered here.
     """
-    budget = config.usable_vram_mib(desktop)
+    profile = profile or hardware.detect()
+    budget = profile.usable_vram_mib(desktop)
     spare = budget - model.weights_mib
     if spare <= 0:
         return Fit(False, 0, 0, int(spare))
@@ -122,7 +125,12 @@ def fit(model: Model, desktop: bool = True) -> Fit:
     )
 
 
-def plan(model: Model, parallel: int | None = None, desktop: bool = True) -> Plan:
+def plan(
+    model: Model,
+    parallel: int | None = None,
+    desktop: bool = True,
+    profile: hardware.Profile | None = None,
+) -> Plan:
     """Decide the pool size and per-conversation window for a model.
 
     Two limits apply and they are not the same limit:
@@ -137,7 +145,7 @@ def plan(model: Model, parallel: int | None = None, desktop: bool = True) -> Pla
     """
     requested = parallel
     parallel = parallel or config.DEFAULT_PARALLEL
-    f = fit(model, desktop)
+    f = fit(model, desktop, profile)
     if not f.fits:
         return Plan(0, parallel, 0, "vram")
 
@@ -187,12 +195,19 @@ def installed(models_dir: Path | None = None) -> list[dict[str, Any]]:
 
 
 def catalog_for_panel(desktop: bool = True) -> list[dict[str, Any]]:
-    """Catalogue entries decorated with fit and installed-state, for the UI."""
+    """Catalogue entries decorated with fit, plan and installed-state, for the UI.
+
+    ``speed_applies`` is false when the GPU in this machine is not the one the
+    speeds were measured on. Fit and context are computed for the real card;
+    speeds are never scaled to it, because a bandwidth ratio produces a guess
+    and the UI would show it in the same typeface as a measurement.
+    """
     have = {m["name"] for m in installed()}
+    profile = hardware.detect()
     rows = []
     for m in load_catalog():
-        f = fit(m, desktop)
-        p = plan(m, desktop=desktop)
+        f = fit(m, desktop, profile)
+        p = plan(m, desktop=desktop, profile=profile)
         rows.append(
             {
                 "id": m.id,
@@ -203,6 +218,8 @@ def catalog_for_panel(desktop: bool = True) -> list[dict[str, Any]]:
                 "kind": m.kind,
                 "params": m.params,
                 "verified": m.verified,
+                "speed_applies": profile.measured,
+                "measured_on": hardware.reference().name,
                 "notes": m.notes,
                 "tags": m.tags,
                 "expected_tok_s": m.expected_tok_s,
