@@ -11,7 +11,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from . import config
+from . import config, hardware
 
 
 def _smi(query: str) -> str | None:
@@ -47,20 +47,33 @@ def check_os() -> tuple[bool, str]:
 
 
 def check_gpu() -> tuple[bool, str]:
-    name = _smi("name")
-    if name is None:
+    """Identify the card, and say whether the catalogue's numbers were taken on it.
+
+    An unrecognised GPU is not an error. Fit and context are computed from the
+    memory it reports, so they stay correct; only the speeds are unverified,
+    and the message says so rather than implying the whole thing is wrong.
+    """
+    profile = hardware.detect()
+    if not profile.present:
         return False, "nvidia-smi not found or no GPU visible"
-    cap = _smi("compute_cap")
-    total = _smi("memory.total")
-    if cap != config.TARGET_COMPUTE_CAPABILITY:
-        return False, (
-            f"{name} is compute capability {cap}; this project is scoped to "
-            f"{config.TARGET_COMPUTE_CAPABILITY} (RTX 3090). It may work, but every "
-            "size and speed figure in the model catalogue would be wrong."
+
+    summary = (
+        f"{profile.name} ({profile.vram_mib} MiB, "
+        f"compute {profile.compute_capability})"
+    )
+    if profile.measured:
+        return True, summary
+    if profile.detected:
+        return True, (
+            f"{summary} -- not a profile shipped with lllm3090. Fit is computed "
+            "from the memory it reports; the catalogue's speeds were measured on "
+            f"a {hardware.reference().name}. Run 'lllm3090 bench' to contribute "
+            "real numbers for this card."
         )
-    if total and int(total) < config.TARGET_VRAM_MIB * 0.95:
-        return False, f"{name} has {total} MiB; the catalogue assumes 24 GB"
-    return True, f"{name} ({total} MiB, compute {cap})"
+    return True, (
+        f"{summary} -- fit computed for this card; speeds were measured on a "
+        f"{hardware.reference().name}"
+    )
 
 
 def check_driver() -> tuple[bool, str]:

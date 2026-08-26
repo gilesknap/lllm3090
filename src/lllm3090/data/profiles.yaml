@@ -1,0 +1,60 @@
+# Hardware profiles.
+#
+# Everything the catalogue claims is computed for one of these. Capacity and
+# compute capability decide what fits; the reserves are what a card cannot spend
+# on weights or KV.
+#
+# `measured` names the profile whose card the speeds in models.yaml were taken
+# on. Speeds are never scaled between profiles: a tokens-per-second figure is a
+# fact about one card, and multiplying it by a bandwidth ratio produces a guess
+# that looks like a measurement. See .claude/skills/moe-throughput-model for
+# what happened the last time that was assumed.
+#
+# To add a card: run `lllm3090 bench` on it and open a pull request.
+
+profiles:
+  - id: rtx-3090
+    name: NVIDIA GeForce RTX 3090
+    compute_capability: "8.6"
+    vram_mib: 24576
+    bandwidth_gbs: 936
+    measured: true
+    notes: The card this project was built and measured on.
+
+  - id: rtx-4090
+    name: NVIDIA GeForce RTX 4090
+    compute_capability: "8.9"
+    vram_mib: 24576
+    bandwidth_gbs: 1008
+    measured: false
+    notes: >-
+      Same capacity as the 3090, so every fit and context figure holds exactly.
+      Slightly more bandwidth, so speeds should be at or above the measured ones.
+
+  - id: rtx-5090
+    name: NVIDIA GeForce RTX 5090
+    compute_capability: "12.0"
+    vram_mib: 32768
+    bandwidth_gbs: 1790
+    measured: false
+    notes: >-
+      8 GB more and roughly 1.9x the bandwidth. Fit figures are computed for it
+      correctly; speeds are unknown and are not extrapolated.
+
+  - id: rtx-5080
+    name: NVIDIA GeForce RTX 5080
+    compute_capability: "12.0"
+    vram_mib: 16384
+    bandwidth_gbs: 960
+    measured: false
+    notes: >-
+      16 GB -- less than a 2020 card. Most of the catalogue does not fit; the
+      panel will say so rather than pretend otherwise.
+
+  - id: rtx-pro-6000-blackwell
+    name: NVIDIA RTX PRO 6000 Blackwell
+    compute_capability: "12.0"
+    vram_mib: 98304
+    bandwidth_gbs: 1790
+    measured: false
+    notes: Everything here fits with room to spare; context is bounded by RoPE.

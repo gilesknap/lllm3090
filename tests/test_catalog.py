@@ -106,8 +106,11 @@ def test_a_model_larger_than_the_card_does_not_fit():
 
 @pytest.mark.parametrize("desktop", [True, False])
 def test_budget_is_positive_and_below_the_card(desktop: bool):
-    budget = config.usable_vram_mib(desktop)
-    assert 0 < budget < config.TARGET_VRAM_MIB
+    from lllm3090 import hardware
+
+    for profile in hardware.load_profiles():
+        budget = profile.usable_vram_mib(desktop)
+        assert 0 < budget < profile.vram_mib, profile.id
 
 
 def test_the_agent_floor_separates_usable_models_from_unusable():
@@ -162,3 +165,93 @@ def test_the_recommendation_agrees_with_the_measurements():
         f"either the recommendation moves, or {pick.name}'s notes name them "
         "and say why it stays"
     )
+
+
+# --- hardware profiles ------------------------------------------------------
+# The point of profiles is that the arithmetic travels to cards nobody here
+# owns. These are the tests that can be written without one.
+
+
+@pytest.mark.parametrize(
+    "profile_id, expect_fits",
+    [
+        ("rtx-3090", 5),
+        ("rtx-4090", 5),   # same capacity as the 3090
+        ("rtx-5090", 5),   # more
+        ("rtx-5080", 2),   # 16 GB: only the two small models
+        ("rtx-pro-6000-blackwell", 5),
+    ],
+)
+def test_what_fits_follows_the_card(profile_id, expect_fits):
+    from lllm3090 import hardware
+
+    profile = next(p for p in hardware.load_profiles() if p.id == profile_id)
+    fits = [m for m in catalog.load_catalog() if catalog.fit(m, profile=profile).fits]
+    assert len(fits) == expect_fits, (
+        f"{profile_id}: {[m.name for m in fits]}"
+    )
+
+
+def test_a_smaller_card_never_promises_more_context():
+    from lllm3090 import hardware
+
+    profiles = {p.id: p for p in hardware.load_profiles()}
+    small, big = profiles["rtx-5080"], profiles["rtx-5090"]
+    for m in catalog.load_catalog():
+        s = catalog.plan(m, profile=small)
+        b = catalog.plan(m, profile=big)
+        assert s.pool <= b.pool, f"{m.name} claims more on the smaller card"
+
+
+def test_exactly_one_profile_carries_the_measurements():
+    from lllm3090 import hardware
+
+    measured = [p for p in hardware.load_profiles() if p.measured]
+    assert len(measured) == 1, "speeds belong to one card, not several"
+    assert measured[0].id == config.REFERENCE_PROFILE
+
+
+def test_a_card_sharing_a_size_is_not_mistaken_for_the_measured_one(monkeypatch):
+    """A 3090 Ti is 24 GiB at compute 8.6 and is still not the reference card.
+
+    Matching on capacity alone would hand it the rtx-3090 profile and print its
+    speeds as measurements taken on the card in front of you.
+    """
+    from lllm3090 import hardware
+
+    monkeypatch.setattr(hardware, "_smi", lambda q: {
+        "name": "NVIDIA GeForce RTX 3090 Ti", "compute_cap": "8.6",
+        "memory.total": "24576",
+    }.get(q))
+    p = hardware.detect()
+    assert p.id != config.REFERENCE_PROFILE
+    assert p.detected and not p.measured
+    assert p.vram_mib == 24576
+
+
+def test_no_gpu_does_not_borrow_the_reference_card_s_measurements(monkeypatch):
+    """With no GPU, capacity may be borrowed to read the catalogue; speed may not."""
+    from lllm3090 import hardware
+
+    monkeypatch.setattr(hardware, "_smi", lambda q: None)
+    p = hardware.detect()
+    assert not p.present, "a machine with no GPU must not report one"
+    assert not p.measured, "no card here, so no figure was measured on it"
+    assert p.vram_mib == hardware.reference().vram_mib
+    # The catalogue is still inspectable, which is the whole point of the fallback.
+    assert catalog.load_catalog()
+
+
+def test_an_unknown_card_is_honest_rather_than_absent(monkeypatch):
+    """An unrecognised GPU must still compute fit, and must not claim speed."""
+    from lllm3090 import hardware
+
+    monkeypatch.setattr(hardware, "_smi", lambda q: {
+        "name": "NVIDIA GeForce RTX 9090", "compute_cap": "13.0",
+        "memory.total": "49152",
+    }.get(q))
+    p = hardware.detect()
+    assert p.detected and not p.measured
+    assert p.vram_mib == 49152
+    # Fit still works, because capacity is all the arithmetic needs.
+    assert all(catalog.fit(m, profile=p).fits for m in catalog.load_catalog())

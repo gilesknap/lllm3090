@@ -16,7 +16,7 @@ from pathlib import Path
 
 import typer
 
-from . import catalog, config, engine, preflight
+from . import catalog, config, engine, hardware, preflight
 from ._version import __version__
 
 # The engine build is pinned, not tracked. "Latest" would silently change the
@@ -107,6 +107,22 @@ def install_engine(
 @app.command()
 def models() -> None:
     """List the curated catalogue and what is already downloaded."""
+    profile = hardware.detect()
+    if not profile.present:
+        typer.echo("Card: none detected (nvidia-smi found no GPU)")
+        typer.echo(
+            f"Context below is computed against a {hardware.reference().name}'s "
+            f"{profile.vram_mib // 1024} GB so the catalogue can be read; it "
+            "describes no card in this machine, and neither do the speeds."
+        )
+    else:
+        typer.echo(f"Card: {profile.name} ({profile.vram_mib // 1024} GB)")
+        if not profile.measured:
+            typer.echo(
+                f"Context is computed for this card. Speeds were measured on a "
+                f"{hardware.reference().name} and are shown for reference only."
+            )
+    typer.echo("")
     header = f"{'MODEL':<24}{'SIZE':>8}{'KIND':>7}{'CONTEXT':>12}  {'STATE':<12}SPEED"
     typer.echo(header)
     for row in catalog.catalog_for_panel():
@@ -116,7 +132,7 @@ def models() -> None:
         )
         speed = f"~{row['expected_tok_s']} tok/s" if row["expected_tok_s"] else "-"
         if row["verified"]:
-            speed += " (measured)"
+            speed += " (measured)" if row["speed_applies"] else " (other card)"
         ctx = (
             f"{row['max_ctx'] // 1024}k x{row['parallel']}" if row["fits"] else "-"
         )
@@ -124,6 +140,50 @@ def models() -> None:
             f"{row['name']:<24}{row['gb']:>7.1f}G{row['kind']:>7}{ctx:>12}  "
             f"{state:<12}{speed}"
         )
+
+
+@app.command()
+def bench(
+    model: str = typer.Argument(..., help="An installed model to benchmark."),
+) -> None:
+    """Benchmark a model with llama-bench and print a profile contribution.
+
+    The catalogue's speeds are measurements, never extrapolations, so a card
+    other than the one they were taken on has no numbers until somebody runs
+    this on it. The output is meant to be pasted into an issue.
+    """
+    entry = next((m for m in catalog.installed() if m["name"] == model), None)
+    if entry is None:
+        typer.echo(f"{model!r} is not installed. Try: lllm3090 models")
+        raise typer.Exit(1)
+    binary = config.LLAMA_DIR / "llama-bench"
+    if not binary.exists():
+        typer.echo(f"llama-bench not found at {binary}; run 'lllm3090 setup'")
+        raise typer.Exit(1)
+
+    profile = hardware.detect()
+    typer.echo(f"Benchmarking {model} on {profile.name} -- this takes a few minutes.\n")
+    env = dict(os.environ, LD_LIBRARY_PATH=str(config.LLAMA_DIR))
+    result = subprocess.run(
+        [str(binary), "-m", entry["path"], "-ngl", "999", "-p", "512", "-n", "128"],
+        env=env, capture_output=True, text=True, check=False,
+    )
+    typer.echo(result.stdout or result.stderr)
+    if result.returncode != 0:
+        raise typer.Exit(1)
+
+    typer.echo("\n--- paste this into an issue at")
+    typer.echo("--- https://github.com/gilesknap/lllm3090/issues\n")
+    known = profile.present and not profile.detected
+    typer.echo(f"""  - id: {profile.id if known else "CHOOSE-AN-ID"}
+    name: {profile.name}
+    compute_capability: "{profile.compute_capability}"
+    vram_mib: {profile.vram_mib}
+    bandwidth_gbs: {profile.bandwidth_gbs or "FILL-IN"}
+    measured: false
+    notes: >-
+      Benchmarked with lllm3090 bench on {model}. Paste the table above so the
+      tg (token generation) figure can be checked against the catalogue.""")
 
 
 @app.command()
