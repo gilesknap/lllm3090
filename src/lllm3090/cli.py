@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import pathlib
+import shlex
 import shutil
 import subprocess
 import sys
@@ -421,11 +422,51 @@ def tui(
     raise typer.Exit(run_tui(url))
 
 
+def claude_env(model: str, window: int) -> dict[str, str]:
+    """The environment Claude Code is launched with, in one place.
+
+    Claude Code's variables are not a versioned contract: a release can add
+    one, rename one, or start reading one that is currently ignored. Nothing
+    can be done about that from here -- moving these strings into a data file
+    would change where they are written, not whether they still match -- so
+    what this does instead is make the whole mapping one value that can be
+    printed, diffed and tested. ``lllm3090 claude --print-env`` prints exactly
+    this, which is how you check it against a new Claude Code without running
+    a session to find out.
+
+    All three model slots point at the local model deliberately: switching
+    with ``/model`` inside that session then stays local rather than falling
+    back to the paid API.
+    """
+    return {
+        "ANTHROPIC_BASE_URL": config.ENGINE_URL,
+        "ANTHROPIC_AUTH_TOKEN": "local",
+        "ANTHROPIC_MODEL": model,
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
+        "CLAUDE_CODE_SUBAGENT_MODEL": model,
+        # The PER-CONVERSATION window, not the pool the slots share.
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(window),
+        "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "32768",
+    }
+
+
+#: Removed rather than blanked when Claude Code is launched. An empty
+#: ANTHROPIC_API_KEY still counts as set, which makes Claude Code disable its
+#: claude.ai connectors and say so on every launch.
+CLAUDE_UNSET = "ANTHROPIC_API_KEY"
+
+
 @app.command()
 def claude(
     ctx: typer.Context,
     force: bool = typer.Option(
         False, "--force", help="Launch even if the window is too small."
+    ),
+    print_env: bool = typer.Option(
+        False, "--print-env",
+        help="Print the environment instead of launching, for eval or another harness.",
     ),
 ) -> None:
     """Launch Claude Code against the local engine.
@@ -434,9 +475,14 @@ def claude(
     written to ~/.claude/settings.json, so a plain ``claude`` elsewhere still
     reaches Anthropic on your normal account.
     """
+    # With --print-env the only thing on stdout is the environment, so it can
+    # be eval'd. Everything the user reads goes to stderr instead.
+    def say(message: str) -> None:
+        typer.echo(message, err=print_env)
+
     state = engine.status()
     if not state["answering"]:
-        typer.echo(f"Nothing is answering on {config.ENGINE_URL}. Start a model first.")
+        say(f"Nothing is answering on {config.ENGINE_URL}. Start a model first.")
         raise typer.Exit(1)
     model = state["model"] or "local"
     # Claude Code must be told the PER-CONVERSATION window, not the pool. Tell it
@@ -458,40 +504,36 @@ def claude(
             if catalog.plan(m, desktop=desktop).per_session
             > config.AGENT_PROMPT_FLOOR * 1.5
         ]
-        typer.echo(
+        say(
             f"{model} serves {int(window) // 1024}k per conversation, but Claude "
             f"Code sends about {config.AGENT_PROMPT_FLOOR // 1000}k tokens of "
             "system prompt and tool definitions on every turn.\n"
             "The first message would fail with 'prompt is too long'.\n"
         )
         if alternatives:
-            typer.echo("Models with room to work: " + ", ".join(alternatives))
-        typer.echo("\nUse --force to try anyway.")
+            say("Models with room to work: " + ", ".join(alternatives))
+        say("\nUse --force to try anyway.")
         raise typer.Exit(1)
     if int(window) < config.AGENT_PROMPT_FLOOR * 1.5:
-        typer.echo(
+        say(
             f"Warning: {int(window) // 1024}k per conversation leaves little room "
             f"after Claude Code's ~{config.AGENT_PROMPT_FLOOR // 1000}k system "
             "prompt. Expect frequent compaction."
         )
 
+    settings = claude_env(model, int(window))
+    if print_env:
+        # Shell-shaped so it can drive a harness this command does not know
+        # about: `eval "$(lllm3090 claude --print-env)"`, then run that tool.
+        say(f"# Claude Code -> {model} @ {config.ENGINE_URL}")
+        for key, value in settings.items():
+            typer.echo(f"export {key}={shlex.quote(value)}")
+        typer.echo(f"unset {CLAUDE_UNSET}")
+        return
+
     typer.echo(f"Claude Code -> {model} @ {config.ENGINE_URL} (context {window})")
-    env = dict(
-        os.environ,
-        ANTHROPIC_BASE_URL=config.ENGINE_URL,
-        ANTHROPIC_AUTH_TOKEN="local",
-        ANTHROPIC_MODEL=model,
-        ANTHROPIC_DEFAULT_OPUS_MODEL=model,
-        ANTHROPIC_DEFAULT_SONNET_MODEL=model,
-        ANTHROPIC_DEFAULT_HAIKU_MODEL=model,
-        CLAUDE_CODE_SUBAGENT_MODEL=model,
-        CLAUDE_CODE_MAX_CONTEXT_TOKENS=window,
-        CLAUDE_CODE_MAX_OUTPUT_TOKENS="32768",
-    )
-    # Remove rather than blank it: an empty ANTHROPIC_API_KEY still counts as
-    # set, which makes Claude Code disable its claude.ai connectors and say so
-    # on every launch. The auth token above is what this endpoint uses.
-    env.pop("ANTHROPIC_API_KEY", None)
+    env = dict(os.environ, **settings)
+    env.pop(CLAUDE_UNSET, None)
     if not shutil.which("claude"):
         typer.echo("claude is not on PATH; install Claude Code first.")
         raise typer.Exit(1)

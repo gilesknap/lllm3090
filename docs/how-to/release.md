@@ -3,10 +3,18 @@
 Releases are built and published by CI from a tag. Nothing is uploaded from a
 laptop and there is no API token in the repository.
 
+First, close the changelog. `CHANGELOG.md` collects changes under
+`## [Unreleased]` as they land; a release renames that heading to the version
+and the date, opens a fresh empty `Unreleased` above it, and adds the two
+compare links at the bottom. Do this in a commit of its own, before the tag,
+or the tag will point at a release that does not describe itself.
+
+Then tag it:
+
 ```bash
-git tag 0.2.0
+git tag 0.5.0
 GIT_CONFIG_GLOBAL=/dev/null git -c credential.helper='!gh auth git-credential' \
-  push https://github.com/gilesknap/lllm3090.git 0.2.0
+  push https://github.com/gilesknap/lllm3090.git 0.5.0
 ```
 
 The tag drives everything: `setuptools_scm` derives the version from it, so

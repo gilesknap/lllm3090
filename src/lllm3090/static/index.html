@@ -38,6 +38,7 @@
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .statusrow .slots{color:var(--ink2);font-size:.78rem}
   .statusrow .vram{font-weight:600;font-size:.85rem;white-space:nowrap}
+  .statusrow .dim{font-weight:400;color:var(--ink2)}
   .bar{height:5px;background:var(--rule);border-radius:99px;overflow:hidden;margin-top:.55rem}
   .bar i{display:block;height:100%;background:var(--ok)}
 
@@ -84,6 +85,7 @@
 
   .loghead{display:flex;align-items:center;justify-content:space-between;gap:.6rem}
   .loghead .left{display:flex;align-items:center;gap:.6rem}
+  .loghead .right{display:flex;align-items:center;gap:.4rem}
   .loghead button{padding:.3rem .7rem;font-size:.72rem}
   #log{height:11rem;overflow-y:auto}
 </style>
@@ -104,6 +106,7 @@
       <span class="nm" id="mdl">—</span>
       <span class="slots" id="slots"></span>
       <span class="vram" id="vram">—</span>
+      <span class="vram dim" id="disk"></span>
       <button class="small" id="stop" style="display:none">Stop</button>
     </div>
     <div class="bar"><i id="vbar" style="width:0"></i></div>
@@ -128,7 +131,7 @@
   <div class="card">
     <div class="loghead">
       <div class="left"><strong>Engine log</strong><span class="k" id="logstate">connecting…</span></div>
-      <button id="logtoggle">hide</button>
+      <div class="right"><button id="logclear">clear</button><button id="logtoggle">hide</button></div>
     </div>
     <pre id="log">…</pre>
   </div>
@@ -260,6 +263,11 @@ async function refresh(){
     $('vbar').style.width = pct + '%';
   }
 
+  // Beside the VRAM figure, because they are the two ways a model does not
+  // arrive: no room on the card, or no room on the disk to put it.
+  $('disk').textContent = s.disk ? `${s.disk.free_gb} GB free` : '';
+  $('disk').title = s.models_dir || '';
+
   const rows = mergedRows(s);
   // What the running model was actually started with, from its own row. An
   // uncatalogued one has nothing to say here, and says nothing.
@@ -317,6 +325,9 @@ async function refresh(){
 
 async function post(url){ try { await fetch(url, {method:'POST'}); } catch {} refresh(); }
 $('stop').onclick = () => { $('stop').disabled = true; post('/api/stop'); };
+// Emptied here as well as on the server: the pane is cleared now rather than
+// on whichever poll the rotated event arrives on.
+$('logclear').onclick = () => { log.textContent = ''; post('/api/logs/clear'); };
 $('logtoggle').onclick = () => {
   logOpen = !logOpen;
   $('log').style.display = logOpen ? '' : 'none';

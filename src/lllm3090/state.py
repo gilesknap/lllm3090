@@ -40,6 +40,30 @@ def vram() -> dict[str, int] | None:
         return None
 
 
+def disk() -> dict[str, float] | None:
+    """Free and total space where the models are kept, in GB, or None.
+
+    The panel is where the decision to fetch 21 GB is actually made, so this
+    is the number that has to be next to it. ``doctor`` checks the same thing,
+    but by the time anyone runs ``doctor`` the download has already failed.
+
+    The nearest existing parent is measured, not ``MODELS_DIR`` itself: on a
+    fresh install the directory is created by the first download, and "no
+    answer" would be the wrong one for a disk that has plenty of room.
+    """
+    d = config.MODELS_DIR
+    while not d.exists() and d != d.parent:
+        d = d.parent
+    try:
+        usage = shutil.disk_usage(d)
+    except OSError:
+        return None
+    return {
+        "free_gb": round(usage.free / 1e9, 1),
+        "total_gb": round(usage.total / 1e9, 1),
+    }
+
+
 def installed_models() -> list[dict[str, Any]]:
     """What is on disk, with a stray GGUF carrying the window it would get.
 
@@ -86,6 +110,7 @@ def snapshot() -> dict[str, Any]:
         "engine": engine.status(),
         "endpoint": config.ENGINE_URL,
         "vram": vram(),
+        "disk": disk(),
         "installed": installed_models(),
         "catalog": catalog.catalog_for_panel(),
         "downloads": downloads.all_downloads(),

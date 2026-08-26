@@ -111,3 +111,62 @@ def test_the_models_offered_instead_are_sized_for_this_machine(launched, monkeyp
 
     assert f"Qwen3.8-27B ({headline}k)" in console
     assert console != desktop, "the same list on a console and a desktop is the bug"
+
+
+def test_print_env_prints_the_same_environment_it_would_launch_with(
+    launched, monkeypatch
+):
+    """The point of the flag: check the mapping against a new Claude Code
+    without starting a session to find out what it did with it."""
+    result = runner.invoke(cli.app, ["claude", "--print-env"])
+    assert result.exit_code == 0, result.output
+    assert launched == {}, "--print-env must not launch anything"
+
+    printed = dict(
+        line.removeprefix("export ").split("=", 1)
+        for line in result.stdout.splitlines()
+        if line.startswith("export ")
+    )
+    window = catalog.launch_plan("Qwen3.8-27B").per_session
+    assert printed == cli.claude_env("Qwen3.8-27B", window)
+    assert f"unset {cli.CLAUDE_UNSET}" in result.stdout
+
+
+def test_print_env_keeps_everything_but_the_environment_off_stdout(
+    launched, monkeypatch
+):
+    """So that `eval "$(lllm3090 claude --print-env)"` is safe: a warning on
+    stdout would be evaluated by the shell."""
+    monkeypatch.setattr(
+        cli.engine, "status",
+        lambda: {"answering": True, "model": "Tiny-1B", "running": True},
+    )
+    monkeypatch.setattr(
+        cli.catalog, "launch_plan",
+        lambda *a, **k: catalog.Plan(
+            pool=20000, per_session=20000, parallel=1, capped_by="vram"
+        ),
+    )
+    result = runner.invoke(cli.app, ["claude", "--print-env", "--force"])
+    assert result.exit_code == 0, result.output
+    for line in result.stdout.splitlines():
+        assert line.startswith(("export ", "unset ", "#")), line
+
+
+def test_the_engine_being_down_is_reported_before_anything_is_printed(
+    launched, monkeypatch
+):
+    monkeypatch.setattr(
+        cli.engine, "status",
+        lambda: {"answering": False, "model": None, "running": False},
+    )
+    result = runner.invoke(cli.app, ["claude", "--print-env"])
+    assert result.exit_code == 1
+    assert "export" not in result.stdout
+
+
+def test_every_model_slot_points_at_the_local_model(launched):
+    """`/model` inside the session must not fall back to the paid API."""
+    env = cli.claude_env("Some-Model", 65536)
+    assert {v for k, v in env.items() if k.endswith("_MODEL")} == {"Some-Model"}
+    assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "65536"

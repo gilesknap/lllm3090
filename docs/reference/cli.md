@@ -16,6 +16,7 @@ lllm3090 <command> [options]
 | `panel [--port N]` | Run the control panel in the foreground |
 | `tui [--url U]` | The panel drawn in the terminal, for a console with no browser |
 | `claude [args…]` | Launch Claude Code against the local engine |
+| `claude --print-env` | Print that environment instead of launching it |
 
 See [](../how-to/context-and-slots.md) for choosing between them.
 
@@ -24,6 +25,11 @@ See [](../how-to/context-and-slots.md) for choosing between them.
 as much as it can up to the model's RoPE ceiling. `--ctx` overrides the whole
 pool; an unknown GGUF gets a conservative 32768 per slot. Anything after `claude` is passed
 through to Claude Code unchanged.
+
+`claude --print-env` writes the environment as `export` lines and nothing else
+to stdout, so `eval "$(lllm3090 claude --print-env)"` sets up a shell for a
+harness this project does not know about. Everything else it has to say —
+warnings, refusals — goes to stderr.
 
 ## Environment
 
