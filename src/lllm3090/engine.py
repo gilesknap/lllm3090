@@ -86,13 +86,23 @@ def server_binary() -> Path:
     return config.LLAMA_DIR / "llama-server"
 
 
+def alive(target: int) -> bool:
+    """Is this PID still a process?
+
+    ``/proc`` rather than ``kill(pid, 0)``: the panel and the CLI both call
+    this, and only one of them is the engine's parent, so a check that depends
+    on signal permissions would answer differently depending on who asked.
+    """
+    return Path(f"/proc/{target}").exists()
+
+
 def pid() -> int | None:
     """PID of the running engine, or None. Stale pidfiles are ignored."""
     try:
         value = int(config.ENGINE_PID.read_text().strip())
     except Exception:
         return None
-    return value if Path(f"/proc/{value}").exists() else None
+    return value if alive(value) else None
 
 
 def served_model() -> str | None:
@@ -146,7 +156,7 @@ def stop(timeout: int = 40) -> tuple[bool, str]:
         config.ENGINE_PID.unlink(missing_ok=True)
         return True, "engine already gone"
     for _ in range(timeout * 2):
-        if not Path(f"/proc/{target}").exists():
+        if not alive(target):
             config.ENGINE_PID.unlink(missing_ok=True)
             return True, f"stopped engine (pid {target})"
         time.sleep(0.5)
