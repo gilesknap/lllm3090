@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import time
@@ -19,6 +20,51 @@ from importlib import resources
 from pathlib import Path
 
 from . import config
+
+#: Colour and cursor escapes llama.cpp writes when it thinks it has a terminal.
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def clean(line: str) -> str:
+    """Strip ANSI colour and collapse a progress-bar redraw to its last frame."""
+    line = ANSI.sub("", line)
+    if "\r" in line:
+        line = line.split("\r")[-1]
+    return line.rstrip("\n")
+
+
+#: How much of the end of the log is worth reading to find its last lines.
+#: An engine that has been up for a day has logged every request it served.
+TAIL_BYTES = 256 * 1024
+
+
+def tail(lines: int = 200) -> list[str]:
+    """The last ``lines`` readable lines of the engine log.
+
+    This lives with the code that writes the log rather than with either front
+    end, because both read it: the panel streams it to a browser over SSE, and
+    the terminal UI -- which is on the same machine by construction, since the
+    panel binds loopback -- simply re-reads the end of the file.
+
+    Split on newlines alone, deliberately. Python's universal newlines turn a
+    carriage return into a line ending, which silently makes a progress-bar
+    redraw into hundreds of near-identical lines -- the exact thing
+    :func:`clean` exists to collapse.
+    """
+    log = config.ENGINE_LOG
+    if not log.exists():
+        return []
+    start_at = max(0, log.stat().st_size - TAIL_BYTES)
+    with log.open("r", errors="replace", newline="") as f:
+        f.seek(start_at)
+        buf = f.read().split("\n")
+    if start_at:
+        # The seek landed inside a line; that fragment is not one.
+        buf = buf[1:]
+    # Empties are dropped before the count, not after, so asking for twenty
+    # lines of log gets twenty lines of log rather than whatever survives.
+    readable = [text for text in (clean(line) for line in buf) if text.strip()]
+    return readable[-lines:]
 
 
 def _get(url: str, timeout: float = 3.0):

@@ -40,6 +40,7 @@ lllm3090 models          # what exists, what fits, what is downloaded
 lllm3090 start Qwen3.6-35B-A3B
 lllm3090 status
 lllm3090 claude          # launch Claude Code against the local model
+lllm3090 tui             # the panel, drawn in the terminal
 lllm3090 stop            # free the VRAM
 ```
 
@@ -79,3 +80,6 @@ Engine state and VRAM at the top, the models you have with start/stop, the
 curated list with what fits this card and what it will do, and the engine log
 streaming underneath. Downloads run in the background with progress, and resume
 from a part file if interrupted.
+
+On a machine with no browser within reach of it — a text console, an SSH
+session without a tunnel — `lllm3090 tui` draws the same panel in the terminal.
