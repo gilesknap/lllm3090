@@ -12,9 +12,9 @@ or the tag will point at a release that does not describe itself.
 Then tag it:
 
 ```bash
-git tag 0.2.0
+git tag 0.5.0
 GIT_CONFIG_GLOBAL=/dev/null git -c credential.helper='!gh auth git-credential' \
-  push https://github.com/gilesknap/lllm3090.git 0.2.0
+  push https://github.com/gilesknap/lllm3090.git 0.5.0
 ```
 
 The tag drives everything: `setuptools_scm` derives the version from it, so
