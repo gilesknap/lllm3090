@@ -130,6 +130,45 @@ def detect() -> Profile:
     )
 
 
+def graphical() -> bool:
+    """Whether a desktop session is holding VRAM on this machine.
+
+    The catalogue reserves ``DESKTOP_RESERVE_MIB`` for a compositor and its
+    clients. On a text console that memory is free, and it is worth a great
+    deal: on a 24 GB card it is most of a 35B model's cache. Rather than make
+    the user remember a flag, ask systemd what target is running.
+
+    Unknown means *assume the desktop is there*. Guessing the other way would
+    hand out context the card does not have -- the failure this module exists
+    to prevent -- so the safe default is the pessimistic one.
+    """
+    if not shutil.which("systemctl"):
+        return True
+    try:
+        out = subprocess.run(
+            ["systemctl", "is-active", "graphical.target"],
+            capture_output=True, text=True, timeout=5, check=False,
+        ).stdout.strip()
+    except Exception:
+        return True
+    return out != "inactive"
+
+
+def free_vram_mib() -> int | None:
+    """VRAM not currently spoken for, as ``nvidia-smi`` sees it.
+
+    The catalogue plans against a fixed reserve, which is an estimate. This is
+    the measurement, and it is what catches the estimate being wrong -- a model
+    sized for a text console and started under a desktop loads, reports itself
+    healthy, and then fails every request out of device memory.
+    """
+    used = _smi("memory.used")
+    total = _smi("memory.total")
+    if used is None or total is None:
+        return None
+    return int(total) - int(used)
+
+
 def reference() -> Profile:
     """The profile the catalogue's speeds were measured on."""
     return next(p for p in load_profiles() if p.measured)

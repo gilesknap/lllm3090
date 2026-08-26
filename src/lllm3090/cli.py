@@ -108,6 +108,7 @@ def install_engine(
 def models() -> None:
     """List the curated catalogue and what is already downloaded."""
     profile = hardware.detect()
+    desktop = hardware.graphical()
     if not profile.present:
         typer.echo("Card: none detected (nvidia-smi found no GPU)")
         typer.echo(
@@ -122,6 +123,14 @@ def models() -> None:
                 f"Context is computed for this card. Speeds were measured on a "
                 f"{hardware.reference().name} and are shown for reference only."
             )
+    if desktop:
+        typer.echo(
+            "Context is computed with a desktop session's VRAM held back. "
+            "See 'headless' in the docs\nfor how to get it back -- it is worth "
+            "up to three times the cache on some models."
+        )
+    else:
+        typer.echo("No desktop session: the full card is available for context.")
     typer.echo("")
     header = f"{'MODEL':<24}{'SIZE':>8}{'KIND':>10}{'CONTEXT':>12}  {'STATE':<12}SPEED"
     typer.echo(header)
@@ -218,12 +227,25 @@ def start(
     known = next((m for m in catalog.load_catalog() if m.name == model), None)
     if ctx is None:
         if known is not None:
-            p = catalog.plan(known, parallel)
+            p = catalog.plan(known, parallel, desktop=hardware.graphical())
             ctx, parallel = p.pool, p.parallel
             typer.echo(f"Context plan: {p.summary}")
         else:
             ctx = 32768 * parallel
+    # The plan plays against a fixed reserve; this is the measurement. Sizing
+    # for a text console and then starting under a desktop is the case that
+    # loads, reports itself healthy, and fails every request out of memory.
     engine.stop()
+    if known is not None:
+        free = hardware.free_vram_mib()
+        need = catalog.vram_needed_mib(known, ctx)
+        if free is not None and need > free:
+            typer.echo(
+                f"Warning: this plan needs about {need / 1024:.1f} GB and only "
+                f"{free / 1024:.1f} GB is free.\nThe engine may load and then "
+                "fail every request. Close what is using the GPU, run headless, "
+                "or pass a smaller --ctx."
+            )
     template = known.chat_template if known else None
     ok, detail = engine.start(
         entry["path"], model, ctx, parallel, 300, template, entry.get("mmproj")

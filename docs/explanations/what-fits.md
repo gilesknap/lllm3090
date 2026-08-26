@@ -18,9 +18,10 @@ A 24 GB card has less than 24 GB to spend:
 21152 MiB  for weights + KV cache
 ```
 
-Running headless recovers that 2400 MiB, which is worth a meaningful slice of
-context. The panel computes with the desktop reserve by default because most
-people are sitting at the machine.
+Running headless recovers that 2400 MiB, and on a tight model it is worth far
+more than "a slice" -- up to three times the cache. `lllm3090` detects which
+target is running and plans for the one you are actually in; see
+[](../how-to/headless.md) for what each model gains.
 
 ## KV cache — the number that actually binds
 

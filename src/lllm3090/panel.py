@@ -74,6 +74,7 @@ def status():
             "vram_gb": round(profile.vram_mib / 1024),
             "measured": profile.measured,
             "present": profile.present,
+            "desktop": hardware.graphical(),
             "reference": hardware.reference().name,
         },
         "engine": engine.status(),
@@ -101,7 +102,7 @@ async def start(model: str, ctx: int | None = None, parallel: int | None = None)
     known = next((m for m in catalog.load_catalog() if m.name == model), None)
     if ctx is None:
         if known is not None:
-            p = catalog.plan(known, parallel)
+            p = catalog.plan(known, parallel, desktop=hardware.graphical())
             ctx, parallel = p.pool, p.parallel
         else:
             # An unknown GGUF: no KV figure to plan with, so be conservative.

@@ -167,7 +167,10 @@ async function refresh(){
   // Catalogue: built once, then only the mutable parts are updated. Rewriting
   // innerHTML on every poll would close any <details> the reader had opened,
   // which is maddening while watching a download.
-  if (s.card && s.card.present === false){
+  if (s.card && s.card.desktop === false){
+    $('catnote').innerHTML = 'No desktop session detected \u2014 the full card is '
+      + 'available, and the context figures below reflect that.';
+  } else if (s.card && s.card.present === false){
     $('catnote').innerHTML = 'No GPU detected. Context is computed against a '
       + s.card.reference + '\u2019s memory so the catalogue can be read; it '
       + 'describes no card in this machine, and neither do the speeds.';

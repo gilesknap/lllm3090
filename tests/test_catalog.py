@@ -236,6 +236,44 @@ def test_a_directory_holding_only_a_projector_is_not_a_model(tmp_path):
     assert catalog.installed(models_dir=tmp_path) == []
 
 
+def test_headless_never_offers_less_than_a_desktop():
+    """Freeing the compositor's VRAM can only add cache, never remove it."""
+    for m in catalog.load_catalog():
+        d = catalog.plan(m, desktop=True)
+        h = catalog.plan(m, desktop=False)
+        assert h.pool >= d.pool, f"{m.name} claims less with more VRAM free"
+        assert h.per_session >= d.per_session
+
+
+def test_an_unknown_session_is_assumed_to_be_a_desktop(monkeypatch):
+    """Guessing headless would hand out context the card does not have.
+
+    Both failure modes are silent, but they are not symmetric: over-reserving
+    costs context, while under-reserving produces an engine that loads, reports
+    itself healthy and fails every request.
+    """
+    from lllm3090 import hardware
+
+    monkeypatch.setattr(hardware.shutil, "which", lambda _: None)
+    assert hardware.graphical() is True
+
+    def boom(*a, **k):
+        raise OSError("systemctl exploded")
+
+    monkeypatch.setattr(hardware.shutil, "which", lambda _: "/bin/systemctl")
+    monkeypatch.setattr(hardware.subprocess, "run", boom)
+    assert hardware.graphical() is True
+
+
+def test_vram_needed_counts_the_projector_and_the_q8_cache():
+    m = next(x for x in catalog.load_catalog() if x.vision)
+    bare = catalog.vram_needed_mib(m, 0)
+    assert bare == m.weights_mib, "no cache should cost only the weights"
+    # A q8 cache is half the f16 figure the catalogue stores.
+    grown = catalog.vram_needed_mib(m, 2048) - bare
+    assert grown == 2048 * (m.kv_kib_per_token / 2) / 1024
+
+
 # --- hardware profiles ------------------------------------------------------
 # The point of profiles is that the arithmetic travels to cards nobody here
 # owns. These are the tests that can be written without one.

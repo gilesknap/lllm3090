@@ -216,7 +216,15 @@ def installed(models_dir: Path | None = None) -> list[dict[str, Any]]:
     return out
 
 
-def catalog_for_panel(desktop: bool = True) -> list[dict[str, Any]]:
+def vram_needed_mib(model: Model, ctx: int) -> float:
+    """Roughly what a pool of ``ctx`` tokens costs, weights and projector included.
+
+    The q8 cache halves the per-token figure, which is stored at f16.
+    """
+    return model.weights_mib + ctx * (model.kv_kib_per_token / 2) / 1024
+
+
+def catalog_for_panel(desktop: bool | None = None) -> list[dict[str, Any]]:
     """Catalogue entries decorated with fit, plan and installed-state, for the UI.
 
     ``speed_applies`` is false when the GPU in this machine is not the one the
@@ -226,6 +234,8 @@ def catalog_for_panel(desktop: bool = True) -> list[dict[str, Any]]:
     """
     have = {m["name"] for m in installed()}
     profile = hardware.detect()
+    if desktop is None:
+        desktop = hardware.graphical()
     rows = []
     for m in load_catalog():
         f = fit(m, desktop, profile)
@@ -251,6 +261,7 @@ def catalog_for_panel(desktop: bool = True) -> list[dict[str, Any]]:
                 "mmproj": m.mmproj,
                 "vision": m.vision,
                 "fits": f.fits,
+                "desktop": desktop,
                 "max_ctx": p.per_session,
                 "parallel": p.parallel,
                 "pool": p.pool,
