@@ -27,16 +27,20 @@ and context are computed for all of them; only the 3090 has measured speeds.
 
 | card | VRAM | models that fit |
 |---|---|---|
-| RTX 3090 | 24 GB | all five |
-| RTX 4090 | 24 GB | all five — identical capacity, so identical context |
-| RTX 5090 | 32 GB | all five, with more context |
-| **RTX 5080** | **16 GB** | **two** — `gpt-oss-20b` and `Qwen3-8B` only |
-| RTX PRO 6000 Blackwell | 96 GB | all five, every one capped by RoPE |
+| RTX 3090 | 24 GB | all eight |
+| RTX 4090 | 24 GB | all eight — identical capacity, so identical context |
+| RTX 5090 | 32 GB | all eight, with more context |
+| **RTX 5080** | **16 GB** | **three** — `gpt-oss-20b`, `Qwen3-8B`, `Gemma-4-12B-QAT` |
+| RTX PRO 6000 Blackwell | 96 GB | all eight, most of them capped by RoPE |
 
 The 5080 is worth dwelling on: it has **less memory than a card from 2020**, so
 `Qwen3.8-27B` at 15.4 GB leaves no room for a usable cache and the two 35B
 variants do not load at all. The panel says so rather than letting you find out
 after a 17 GB download.
+
+These counts are the output of `catalog.fit()`, not a hand-maintained list, so
+`lllm3090 models` on the card in front of you is the authority — but they date
+from a catalogue of eight entries and will drift as it grows.
 
 ## An unrecognised card
 
