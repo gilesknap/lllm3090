@@ -301,16 +301,23 @@ def _engine_lines(snap: dict[str, Any], width: int) -> list[Line]:
     # better answer than a blank, since both are on the same loopback.
     endpoint = snap.get("endpoint") or config.ENGINE_URL
     lines = [Line(_columns(f"engine   {word:<9}{model}", endpoint, width), style)]
+    d = snap.get("disk")
+    # The other way a model fails to arrive: room on the card is no use without
+    # room on the disk to put the 21 GB first.
+    free = f"{d['free_gb']:.0f} GB free" if d else ""
     v = snap.get("vram")
     if v and v.get("total_mb"):
         used, total = v["used_mb"], v["total_mb"]
         figure = f"{used / 1024:.1f} / {total / 1024:.1f} GiB"
-        lines.append(
-            Line(f"VRAM     {bar(used / total, min(34, max(10, width - 32)))} {figure}")
-        )
+        # The bar gives back what the right-hand figure needs.
+        span = min(34, max(10, width - 32 - (len(free) + 2 if free else 0)))
+        lines.append(Line(_columns(
+            f"VRAM     {bar(used / total, span)} {figure}", free, width
+        )))
     else:
-        lines.append(Line("VRAM     not reported (no nvidia-smi on this machine)",
-                          "dim"))
+        lines.append(Line(_columns(
+            "VRAM     not reported (no nvidia-smi on this machine)", free, width
+        ), "dim"))
     return lines
 
 

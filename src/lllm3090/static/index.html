@@ -38,6 +38,7 @@
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .statusrow .slots{color:var(--ink2);font-size:.78rem}
   .statusrow .vram{font-weight:600;font-size:.85rem;white-space:nowrap}
+  .statusrow .dim{font-weight:400;color:var(--ink2)}
   .bar{height:5px;background:var(--rule);border-radius:99px;overflow:hidden;margin-top:.55rem}
   .bar i{display:block;height:100%;background:var(--ok)}
 
@@ -105,6 +106,7 @@
       <span class="nm" id="mdl">—</span>
       <span class="slots" id="slots"></span>
       <span class="vram" id="vram">—</span>
+      <span class="vram dim" id="disk"></span>
       <button class="small" id="stop" style="display:none">Stop</button>
     </div>
     <div class="bar"><i id="vbar" style="width:0"></i></div>
@@ -260,6 +262,11 @@ async function refresh(){
     $('vram').textContent = `${(s.vram.used_mb/1024).toFixed(1)} / ${(s.vram.total_mb/1024).toFixed(0)} GiB`;
     $('vbar').style.width = pct + '%';
   }
+
+  // Beside the VRAM figure, because they are the two ways a model does not
+  // arrive: no room on the card, or no room on the disk to put it.
+  $('disk').textContent = s.disk ? `${s.disk.free_gb} GB free` : '';
+  $('disk').title = s.models_dir || '';
 
   const rows = mergedRows(s);
   // What the running model was actually started with, from its own row. An

@@ -54,6 +54,7 @@ def snap() -> dict:
                    "answering": True, "model": "Qwen3.6-35B-A3B"},
         "endpoint": "http://127.0.0.1:1919",
         "vram": {"used_mb": 19000, "total_mb": 24576},
+        "disk": {"free_gb": 411.2, "total_gb": 1000.0},
         "installed": list(MODELS),
         "catalog": [dict(c) for c in CATALOG],
         "downloads": [],
@@ -773,3 +774,20 @@ def test_a_missing_log_is_not_an_error(tmp_path, monkeypatch):
     """Nothing has been started yet. That is the ordinary state after install."""
     monkeypatch.setattr(config, "ENGINE_LOG", tmp_path / "nothing.log")
     assert engine.tail() == []
+
+
+def test_the_header_says_how_much_room_is_left_for_a_download(snap):
+    """Room on the card is no use without room on the disk to put it."""
+    line = _vram_line(snap, 96)
+    assert line.rstrip().endswith("411 GB free")
+    assert "19000" not in line, "the bar keeps its own figures in GiB"
+
+
+def test_a_machine_that_cannot_answer_about_its_disk_says_nothing_about_it(snap):
+    snap["disk"] = None
+    assert "free" not in _vram_line(snap, 96)
+
+
+def _vram_line(snap: dict, width: int) -> str:
+    return next(ln.text for ln in tui._engine_lines(snap, width)
+                if ln.text.startswith("VRAM"))

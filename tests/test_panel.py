@@ -20,7 +20,7 @@ from typing import Self
 import pytest
 from fastapi.testclient import TestClient
 
-from lllm3090 import catalog, config, downloads, engine, panel
+from lllm3090 import catalog, config, downloads, engine, panel, state
 
 
 class Busy:
@@ -57,7 +57,7 @@ def client(tmp_path, monkeypatch):
 # --- status ------------------------------------------------------------------
 
 
-def test_status_describes_the_machine_with_nothing_on_it(client):
+def test_status_describes_the_machine_with_nothing_on_it(client, tmp_path):
     """The shape both front ends read. It must be answerable on a bare box."""
     s = client.get("/api/status").json()
     assert s["version"]
@@ -70,6 +70,20 @@ def test_status_describes_the_machine_with_nothing_on_it(client):
     assert set(s["card"]) == {
         "name", "vram_gb", "measured", "present", "desktop", "reference"
     }
+    # Free space is answered even though the models directory does not exist
+    # yet: on a fresh install it is the first download that creates it.
+    assert not (tmp_path / "models").exists()
+    assert s["disk"]["free_gb"] > 0
+    assert s["disk"]["total_gb"] >= s["disk"]["free_gb"]
+
+
+def test_a_disk_that_cannot_be_measured_is_reported_as_unknown(client, monkeypatch):
+    """None rather than zero: a machine that will not say is not a full disk."""
+    def refuse(_path):
+        raise OSError("no such device")
+
+    monkeypatch.setattr(state.shutil, "disk_usage", refuse)
+    assert client.get("/api/status").json()["disk"] is None
 
 
 def test_a_gguf_the_catalogue_has_never_seen_is_still_offered(client, tmp_path):
