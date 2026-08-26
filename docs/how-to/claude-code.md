@@ -18,6 +18,7 @@ ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL=<the served model>
 CLAUDE_CODE_SUBAGENT_MODEL=<the served model>
 CLAUDE_CODE_MAX_CONTEXT_TOKENS=<the catalogue's default context>
 CLAUDE_CODE_MAX_OUTPUT_TOKENS=32768
+CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=<the engine's slots, less the parent's>
 ```
 
 Nothing is written to `~/.claude/settings.json`, so a plain `claude` in another
@@ -45,6 +46,13 @@ session to find out.
 All three model slots point at the local model deliberately, so switching with
 `/model` inside that session stays local rather than silently falling back to
 the paid API.
+
+The subagent limit comes from the engine rather than from a guess: `GET /props`
+reports `total_slots`, one stays with the parent, and the rest is the cap.
+Claude Code's own default is 20, which on a two-slot engine would let it plan a
+fan-out ten times wider than the card can hold — and llama.cpp queues the
+excess rather than refusing it, so that arrives as slowness rather than as an
+error. See [](context-and-slots.md).
 
 ## What to expect
 

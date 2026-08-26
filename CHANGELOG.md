@@ -10,6 +10,10 @@ change is only visible in the source it does not need a line here.
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.5.0] — 2026-08-26
+
 ### Added
 
 - A terminal UI (`lllm3090 tui`), so a machine with no browser — a text
@@ -28,6 +32,12 @@ change is only visible in the source it does not need a line here.
   arrive.
 - An explanation of what else is out there and when to use it instead
   (`docs/explanations/landscape.md`).
+- `lllm3090 claude` tells Claude Code how many conversations the engine can
+  actually hold, by asking it (`/props` → `total_slots`) and keeping one slot
+  for the parent. Claude Code's own default is 20 concurrent subagents, which
+  on a two-slot engine is a fan-out ten times wider than the card has room
+  for — and llama.cpp queues the excess rather than refusing it, so it arrived
+  as the model being slow.
 
 ### Changed
 
@@ -98,7 +108,8 @@ First release. The package, the installer, the control panel and the model
 catalogue, with a KV pool sized for concurrent conversations rather than for
 one session.
 
-[Unreleased]: https://github.com/gilesknap/lllm3090/compare/0.4.0...HEAD
+[Unreleased]: https://github.com/gilesknap/lllm3090/compare/0.5.0...HEAD
+[0.5.0]: https://github.com/gilesknap/lllm3090/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/gilesknap/lllm3090/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/gilesknap/lllm3090/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/gilesknap/lllm3090/compare/0.1.0...0.2.0

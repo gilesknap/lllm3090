@@ -117,6 +117,21 @@ def served_model() -> str | None:
     return first.get("id") or first.get("name")
 
 
+def served_slots() -> int | None:
+    """How many conversations the running engine can hold at once, or None.
+
+    Asked rather than derived from the ``--parallel`` it was started with: a
+    start can override that, and this project is not necessarily the thing
+    that started the engine answering on this port. ``/props`` reports what it
+    is really serving.
+    """
+    data = _get(f"{config.ENGINE_URL}/props", timeout=2)
+    if not isinstance(data, dict):
+        return None
+    slots = data.get("total_slots")
+    return slots if isinstance(slots, int) and slots > 0 else None
+
+
 def healthy() -> bool:
     return _get(f"{config.ENGINE_URL}/health", timeout=2) is not None
 
