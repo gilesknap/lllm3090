@@ -51,6 +51,46 @@ turn**, before any of your work. Consequences:
 - Sizing a card for agentic work means sizing the KV cache first and giving the
   weights what is left, not the other way round.
 
+### The ~40k is measured, and it is nearly all tool definitions
+
+`/context` inside a session running on a local model, in a repo with a global
+`CLAUDE.md`, two MCP servers and a large skill set:
+
+```
+System prompt    2.2k
+System tools    31.2k   <- 78% of the overhead
+MCP tools        2.6k
+Custom agents    986
+Memory files     1.1k
+Skills           2.1k
+               ------
+                40.2k
+```
+
+So the ~40k figure holds, and the instinct to blame `CLAUDE.md`, skills or MCP
+servers is wrong — together they are about 4k. **The tool schemas are the
+budget**, and they are dominated by a handful of large ones: in the captured
+request, one tool was a fifth of the entire tool payload and five were half of
+it. Trimming skills to win context is effort spent on 5% of the problem.
+
+To measure it rather than guess, point the client at a proxy that records the
+request body and answers with a canned reply — the same technique as any
+API capture. Two things to get right: keep the **largest** request rather than
+the first, because the client opens with a tiny probe; and answer streaming
+requests as SSE, or an interactive client errors before sending anything real.
+
+### Budget the autocompact buffer too
+
+The window is not all yours. Claude Code holds back a substantial autocompact
+buffer — 33k of a 131k window in the session above, a full quarter — on top of
+the 40k of overhead. That leaves under 60k of a 131k model for actual
+conversation, which is why a 131k local model compacts within a couple of turns
+while a 217k one does not.
+
+`CLAUDE_CODE_MAX_OUTPUT_TOKENS` is worth setting deliberately for the same
+reason: a 32k output reservation is a quarter of a 131k window and most replies
+never approach it.
+
 ## The KV pool is global, not per-conversation
 
 This is the detail that surprises people. Every concurrent request draws on one

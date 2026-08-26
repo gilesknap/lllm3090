@@ -182,6 +182,38 @@ fetch crosses, and the answer turns on the cache-hit fraction — a model can fi
 comfortably and still decode at 8 tok/s. Use `moe-throughput-model` for that
 case; it is what turns "will it fit" into "is it worth having".
 
+## 7. A multimodal projector costs more than its file size
+
+A vision checkpoint ships a separate `mmproj` GGUF. Budgeting its file size is
+not enough: the vision tower needs compute buffers of its own, and they are not
+in the file. Measured on a 3090, a **1.19 GB projector occupied 1376 MiB
+resident** — a ~240 MiB shortfall, which is nothing until it is the last 240 MiB.
+
+The failure mode is the dangerous one. The engine loads, the health endpoint
+answers, the served-model query is correct — and then **every request fails**:
+
+```
+vk::Device::allocateMemory: ErrorOutOfDeviceMemory
+decode: Invalid input batch. off = 0, n_batch = 2048, ret = -1
+```
+
+Twelve failures, zero completions, and a supervisor that sees a healthy service.
+
+Two things follow:
+
+- **Hold back extra workspace when a projector is loaded**, over and above the
+  usual reserve. Budgeting weights + projector-file + KV and stopping there
+  promises context the compute buffers have already spent.
+- **Verify with a prompt large enough to fill a batch.** A short "say OK" can
+  succeed on a model that fails at 4k tokens, because the big activation buffer
+  is never allocated. Test with something that drives full `n_batch` batches.
+
+Beware also that this failure is often *marginal* rather than absolute: the same
+configuration served once a desktop released ~800 MiB. That is worse than a hard
+failure, because it means the promise held only while nobody used the machine.
+Isolate it by loading the same pool with the projector removed — if that serves,
+the projector is the cause, not the KV arithmetic.
+
 ## Putting the budget together
 
 ```
