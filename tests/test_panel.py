@@ -236,6 +236,37 @@ def test_asking_for_no_log_lines_returns_none_of_them(client):
     assert client.get("/api/logs", params={"tail": 0}).json() == {"lines": []}
 
 
+def test_clearing_the_log_empties_it_without_removing_it(client):
+    """Truncated rather than unlinked: the engine has this file open, and a
+    file it is writing into that nothing can read is worse than a full one."""
+    config.ENGINE_LOG.write_text("a great deal of engine output\n" * 50)
+    assert client.post("/api/logs/clear").json() == {"cleared": True}
+    assert config.ENGINE_LOG.exists()
+    assert config.ENGINE_LOG.read_text() == ""
+    assert client.get("/api/logs").json() == {"lines": []}
+
+
+def test_clearing_a_log_that_is_not_there_is_not_an_error(client):
+    assert client.post("/api/logs/clear").json() == {"cleared": True}
+
+
+def test_a_cleared_log_reaches_the_browser_as_a_rotation(client, monkeypatch):
+    """Which is what the page already listens for to empty the pane it shows."""
+    config.ENGINE_LOG.write_text("old output\n")
+    monkeypatch.setattr(panel.asyncio, "sleep", _no_sleep)
+
+    async def collect() -> list[str]:
+        gen = panel._tail_stream()
+        await gen.asend(None)
+        await gen.asend(None)                      # catch up to the end
+        client.post("/api/logs/clear")
+        seen = [await gen.asend(None)]
+        await gen.aclose()
+        return seen
+
+    assert "event: rotated" in asyncio.run(collect())[0]
+
+
 def test_the_log_stream_holds_back_a_line_that_has_no_newline_yet(
     client, tmp_path, monkeypatch
 ):

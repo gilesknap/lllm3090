@@ -84,6 +84,7 @@
 
   .loghead{display:flex;align-items:center;justify-content:space-between;gap:.6rem}
   .loghead .left{display:flex;align-items:center;gap:.6rem}
+  .loghead .right{display:flex;align-items:center;gap:.4rem}
   .loghead button{padding:.3rem .7rem;font-size:.72rem}
   #log{height:11rem;overflow-y:auto}
 </style>
@@ -128,7 +129,7 @@
   <div class="card">
     <div class="loghead">
       <div class="left"><strong>Engine log</strong><span class="k" id="logstate">connecting…</span></div>
-      <button id="logtoggle">hide</button>
+      <div class="right"><button id="logclear">clear</button><button id="logtoggle">hide</button></div>
     </div>
     <pre id="log">…</pre>
   </div>
@@ -317,6 +318,9 @@ async function refresh(){
 
 async function post(url){ try { await fetch(url, {method:'POST'}); } catch {} refresh(); }
 $('stop').onclick = () => { $('stop').disabled = true; post('/api/stop'); };
+// Emptied here as well as on the server: the pane is cleared now rather than
+// on whichever poll the rotated event arrives on.
+$('logclear').onclick = () => { log.textContent = ''; post('/api/logs/clear'); };
 $('logtoggle').onclick = () => {
   logOpen = !logOpen;
   $('log').style.display = logOpen ? '' : 'none';

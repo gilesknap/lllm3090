@@ -210,7 +210,17 @@ def start(
 
     config.STATE_DIR.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, LD_LIBRARY_PATH=str(config.LLAMA_DIR))
-    with config.ENGINE_LOG.open("wb") as log:
+    # O_TRUNC so each run starts with its own log, and O_APPEND so every write
+    # lands at the end of the file rather than at the engine's own offset. The
+    # second matters because the log can be emptied from under a running
+    # engine: without it, the next line would be written at the offset it had
+    # reached, behind a hole of NULs the length of what was cleared.
+    fd = os.open(
+        config.ENGINE_LOG,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_APPEND,
+        0o644,
+    )
+    with os.fdopen(fd, "wb") as log:
         proc = subprocess.Popen(
             [
                 str(binary),

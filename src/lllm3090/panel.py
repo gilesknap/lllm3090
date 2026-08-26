@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from contextlib import asynccontextmanager
 from importlib import resources
 
@@ -117,6 +118,25 @@ def cancel_download(model_id: str):
 @app.get("/api/logs")
 def logs(tail: int = 200):
     return {"lines": engine.tail(tail)}
+
+
+@app.post("/api/logs/clear")
+def clear_logs():
+    """Empty the engine log, leaving the engine writing to it alone.
+
+    Truncated rather than rotated or deleted: the engine holds this file open
+    for the life of the process, so a rename would send its output to a file
+    nothing is reading, and an unlink would send it nowhere at all. `start`
+    opens the log O_APPEND for the same reason -- the next line the engine
+    writes lands at the beginning of the emptied file rather than at the
+    offset it had reached.
+
+    The tailer notices the file has shrunk and emits `rotated`, which is
+    already what tells the browser to clear the pane it is showing.
+    """
+    if config.ENGINE_LOG.exists():
+        os.truncate(config.ENGINE_LOG, 0)
+    return {"cleared": True}
 
 
 async def _tail_stream():

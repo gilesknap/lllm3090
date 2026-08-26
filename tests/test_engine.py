@@ -14,6 +14,7 @@ port is a closed port, and asking a real one costs a millisecond.
 
 from __future__ import annotations
 
+import os
 import signal
 
 import pytest
@@ -224,3 +225,33 @@ def test_healthy_is_false_when_nothing_is_listening(monkeypatch):
     """A real socket to a closed port: refused, caught, reported as unhealthy."""
     monkeypatch.setattr(config, "ENGINE_URL", "http://127.0.0.1:1")
     assert engine.healthy() is False
+
+
+def test_the_engine_log_is_opened_for_append(installed_engine, state_dir, monkeypatch):
+    """So that emptying it from the panel does not punch a hole in it.
+
+    The engine holds this file open for its whole life. Cleared without
+    O_APPEND, its next write would land at the offset it had reached, behind
+    however many NULs were truncated away.
+    """
+    import fcntl
+
+    flags: list[int] = []
+
+    class FakeProc:
+        pid = 4242
+
+        def poll(self):
+            return None
+
+    def capture(argv, **kw):
+        flags.append(fcntl.fcntl(kw["stdout"].fileno(), fcntl.F_GETFL))
+        return FakeProc()
+
+    monkeypatch.setattr(engine.subprocess, "Popen", capture)
+    model = state_dir / "model.gguf"
+    model.write_bytes(b"GGUF")
+    config.ENGINE_LOG.write_text("output from the run before this one\n")
+    engine.start(str(model), "M", 4096, 1, 0)
+    assert flags[0] & os.O_APPEND
+    assert config.ENGINE_LOG.read_text() == "", "each run starts with its own log"
