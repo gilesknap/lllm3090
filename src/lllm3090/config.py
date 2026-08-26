@@ -49,11 +49,11 @@ DESKTOP_RESERVE_MIB = 2400
 #: Compute buffers, CUDA/Vulkan graphs and fragmentation headroom.
 WORKSPACE_RESERVE_MIB = 1024
 
-#: VRAM the driver holds back before any process allocates a byte: page tables,
-#: the console framebuffer, and the card's own bookkeeping. ``nvidia-smi``
-#: reports it as ``memory.reserved`` and it is *not* part of what a process can
-#: claim, so a budget computed from the nameplate capacity overstates the card
-#: by exactly this much.
+#: VRAM the driver holds back before any process allocates a byte -- page
+#: tables, the console framebuffer, and the card's own bookkeeping.
+#: ``nvidia-smi`` reports it as ``memory.reserved`` and it is *not* part of
+#: what a process can claim, so a budget computed from the nameplate capacity
+#: overstates the card by exactly this much.
 #:
 #: Measured at 451 MiB on the 3090 here, on a text console with nothing else
 #: running. Leaving it out is what let a plan of 2 x 262144 tokens be issued
