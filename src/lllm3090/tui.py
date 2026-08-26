@@ -88,6 +88,18 @@ class Ui:
     message: str = ""
     busy: str = ""
 
+    def clamp(self, snap: dict[str, Any]) -> None:
+        """Pull the cursors back inside lists that may have shrunk.
+
+        The poller replaces the snapshot on its own thread, so a model deleted
+        from disk -- or a catalogue that has not loaded yet -- can leave a
+        cursor pointing past the end of the list it was placed in. Every read
+        of that cursor is then an ``IndexError``, and an exception out of
+        ``handle_key`` closes the UI on a keypress.
+        """
+        self.model = min(max(0, self.model), max(0, len(snap["installed"]) - 1))
+        self.entry = min(max(0, self.entry), max(0, len(snap["catalog"]) - 1))
+
 
 # ---------------------------------------------------------------------------
 # Talking to the machine
@@ -406,6 +418,7 @@ def render(snap: dict[str, Any], ui: Ui, width: int, height: int) -> list[Line]:
     A curses window raises rather than clipping when something is written past
     its last column, so every line this returns is already inside the window.
     """
+    ui.clamp(snap)
     if width < MIN_WIDTH or height < MIN_HEIGHT:
         small = [
             f"window is {width}x{height}",
@@ -487,6 +500,7 @@ def handle_key(
     loop: stopping an engine waits for the VRAM to come back, which is seconds,
     and a UI that stops repainting for seconds looks broken.
     """
+    ui.clamp(snap)
     if key in {"q", "escape"}:
         return False
     ui.message = ""

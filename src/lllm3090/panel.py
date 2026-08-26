@@ -48,6 +48,12 @@ async def start(model: str, ctx: int | None = None, parallel: int | None = None)
     entry = next((m for m in catalog.installed() if m["name"] == model), None)
     if entry is None:
         return JSONResponse({"error": f"{model!r} is not installed"}, status_code=400)
+    if parallel is not None and parallel < 1:
+        # A query string is not a form the page controls, so this is checked
+        # here rather than left to the ValueError catalog.launch_plan raises.
+        return JSONResponse(
+            {"error": "parallel must be at least 1"}, status_code=400
+        )
     if _busy.locked():
         return JSONResponse({"error": "busy"}, status_code=409)
 
@@ -126,7 +132,11 @@ async def _tail_stream():
         st = log.stat()
         ino = st.st_ino
         start_at = max(0, st.st_size - 4000)
-        with log.open("r", errors="replace") as f:
+        # newline="": universal newlines would turn a progress redraw's \r into
+        # \n, splitting one line into a frame per update. engine.clean collapses
+        # the redraw, but only while the frames are still on the same line, and
+        # engine.tail reads the same file the same way.
+        with log.open("r", errors="replace", newline="") as f:
             f.seek(start_at)
             if start_at:
                 f.readline()
@@ -142,16 +152,15 @@ async def _tail_stream():
                 ino, pos, pending = st.st_ino, 0, ""
                 yield "event: rotated\ndata: --- engine restarted ---\n\n"
             if st.st_size > pos:
-                with log.open("r", errors="replace") as f:
+                with log.open("r", errors="replace", newline="") as f:
                     f.seek(pos)
                     chunk = f.read()
                     pos = f.tell()
                 data = pending + chunk
-                if data.endswith("\n"):
-                    lines, pending = data.splitlines(), ""
-                else:
-                    parts = data.split("\n")
-                    lines, pending = parts[:-1], parts[-1]
+                # Split on "\n" alone: splitlines() breaks on \r as well, which
+                # is exactly the character this stream has to keep hold of.
+                parts = data.split("\n")
+                lines, pending = parts[:-1], parts[-1]
                 for raw in lines:
                     line = engine.clean(raw)
                     if line.strip():

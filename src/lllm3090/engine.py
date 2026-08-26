@@ -64,7 +64,9 @@ def tail(lines: int = 200) -> list[str]:
     # Empties are dropped before the count, not after, so asking for twenty
     # lines of log gets twenty lines of log rather than whatever survives.
     readable = [text for text in (clean(line) for line in buf) if text.strip()]
-    return readable[-lines:]
+    # `readable[-0:]` is the whole log, which is the opposite of what asking for
+    # no lines means. The panel takes this count straight off a query string.
+    return readable[-lines:] if lines > 0 else []
 
 
 def _get(url: str, timeout: float = 3.0):

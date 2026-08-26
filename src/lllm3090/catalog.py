@@ -198,6 +198,10 @@ def launch_plan(name: str, parallel: int | None = None) -> Plan:
     identically: a model started from the console and the same model started
     from the panel are the same engine on the same card.
     """
+    if parallel is not None and parallel < 1:
+        # Zero would be swallowed by the default below and negative divides the
+        # pool the wrong way, producing a Plan the engine would be started with.
+        raise ValueError(f"parallel must be at least 1, not {parallel}")
     parallel = parallel or config.DEFAULT_PARALLEL
     known = next((m for m in load_catalog() if m.name == name), None)
     if known is not None:

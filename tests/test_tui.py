@@ -9,9 +9,12 @@ strings is a much smaller surface than what decides them.
 
 from __future__ import annotations
 
+import asyncio
+import json
+
 import pytest
 
-from lllm3090 import catalog, config, downloads, engine, state, tui
+from lllm3090 import catalog, config, downloads, engine, panel, state, tui
 
 MODELS = [
     {"name": "Qwen3.6-35B-A3B", "path": "/m/Qwen3.6-35B-A3B/w.gguf",
@@ -491,6 +494,70 @@ def test_the_curses_driver_paints_a_screen_and_quits(tmp_path, monkeypatch):
     assert "nothing downloaded yet" in painted
 
 
+def test_the_cursor_survives_a_list_that_shrinks_under_it(snap):
+    """A model deleted from disk must not close the UI on the next keypress.
+
+    The poller replaces the snapshot on its own thread, so the cursor can be
+    left pointing past the end of the list it was placed in -- and every read
+    of it after that is an IndexError out of `handle_key`, which is a UI that
+    exits when you press a key.
+    """
+    control, submit = tui.Control(), Recorder()
+    ui = tui.Ui(pane="models", model=1)
+    shrunk = dict(snap, installed=[MODELS[0]])
+    assert tui.handle_key("s", shrunk, ui, control, submit) is True
+    assert ui.model == 0, "the cursor must be pulled back onto the shorter list"
+    assert submit.labels == [f"start {MODELS[0]['name']}"], (
+        "and the key must act on the row it was pulled back to"
+    )
+
+    empty = dict(snap, installed=[], catalog=[])
+    ui = tui.Ui(pane="models", model=3, entry=2)
+    assert tui.handle_key("s", empty, ui, tui.Control(), Recorder()) is True
+    assert (ui.model, ui.entry) == (0, 0)
+    assert tui.render(empty, ui, 100, 30), "an empty machine still draws"
+
+
+def test_the_terminal_ui_is_refused_without_a_terminal_to_draw_on(monkeypatch):
+    """Both streams, not just the one curses writes to.
+
+    curses draws on stdout and reads the keyboard from stdin, so a piped stdin
+    with a real stdout gets a screen that repaints and answers nothing.
+    """
+    from types import SimpleNamespace
+
+    from typer.testing import CliRunner
+
+    from lllm3090 import cli
+
+    # A stand-in for `sys`, because CliRunner substitutes the real streams for
+    # its own during invoke -- patching those would be patching the runner.
+    def streams(stdin: bool, stdout: bool) -> SimpleNamespace:
+        return SimpleNamespace(
+            stdin=SimpleNamespace(isatty=lambda: stdin),
+            stdout=SimpleNamespace(isatty=lambda: stdout),
+        )
+
+    for stdin_tty, stdout_tty in ((False, True), (True, False), (False, False)):
+        monkeypatch.setattr(cli, "sys", streams(stdin_tty, stdout_tty))
+        result = CliRunner().invoke(cli.app, ["tui"])
+        assert result.exit_code == 1, (stdin_tty, stdout_tty, result.output)
+        assert "needs a terminal" in result.output
+
+
+def test_a_slot_count_below_one_is_not_a_plan():
+    """Zero is swallowed by the default and negative divides the pool backwards.
+
+    Either way the engine is started with it, so it is refused where the plan
+    is made rather than left to produce a Plan that looks like any other.
+    """
+    for bad in (0, -1):
+        with pytest.raises(ValueError, match="at least 1"):
+            catalog.launch_plan("Qwen3-8B", bad)
+    assert catalog.launch_plan("Qwen3-8B", 1).parallel == 1
+    assert catalog.launch_plan("Qwen3-8B").parallel == config.DEFAULT_PARALLEL
+
+
 # ---------------------------------------------------------------------------
 # The log
 # ---------------------------------------------------------------------------
@@ -512,6 +579,57 @@ def test_the_log_tail_strips_the_redraws_llama_server_writes(tmp_path, monkeypat
     monkeypatch.setattr(config, "ENGINE_LOG", log)
     assert engine.tail() == ["load: ok", "progress 100%", "srv    load_model: done"]
     assert engine.tail(1) == ["srv    load_model: done"]
+
+
+def test_a_redraw_split_across_two_reads_is_still_one_line(tmp_path, monkeypatch):
+    """The SSE stream must read the log the way `engine.tail` reads it.
+
+    Universal newlines turn a progress redraw's \\r into \\n before anything
+    can see it, so `engine.clean` gets one frame per update instead of one
+    line, and the browser is sent the hundreds of rows the tail pane does not
+    show. The two views of the same file have to agree.
+    """
+    log = tmp_path / "engine.log"
+    log.write_text("")
+    monkeypatch.setattr(config, "ENGINE_LOG", log)
+
+    async def collect() -> list[str]:
+        out: list[str] = []
+        stream = panel._tail_stream()
+        # The generator seeks to the end of what exists before it yields, so
+        # the file is grown after it starts -- which is the case that matters.
+        assert await anext(stream) == "retry: 3000\n\n"
+        with log.open("a") as f:
+            f.write("progress 1%\rprogress 50%\rprogress 100%\nsrv done\n")
+        for _ in range(3):
+            frame = await anext(stream)
+            if frame.startswith("data: "):
+                out.append(json.loads(frame[len("data: "):].strip()))
+            if len(out) >= 2:
+                break
+        await stream.aclose()
+        return out
+
+    lines = asyncio.run(collect())
+    assert lines[0] == "progress 100%", "a redraw is one line, at its last frame"
+    assert lines[1] == "srv done"
+    assert engine.tail(2) == ["progress 100%", "srv done"], (
+        "and the polled tail must agree with the stream"
+    )
+
+
+def test_asking_for_no_lines_gets_no_lines(tmp_path, monkeypatch):
+    """`readable[-0:]` is the whole log, which is the opposite of the request.
+
+    The panel takes this count off a query string, so nothing between the
+    caller and the slice makes zero impossible.
+    """
+    log = tmp_path / "engine.log"
+    log.write_text("one\ntwo\nthree\n")
+    monkeypatch.setattr(config, "ENGINE_LOG", log)
+    assert engine.tail(3) == ["one", "two", "three"]
+    assert engine.tail(0) == []
+    assert engine.tail(-1) == []
 
 
 def test_a_missing_log_is_not_an_error(tmp_path, monkeypatch):

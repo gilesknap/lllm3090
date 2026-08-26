@@ -221,7 +221,8 @@ def start(
     model: str = typer.Argument(..., help="Directory name under the models dir."),
     ctx: int = typer.Option(None, help="Total KV pool. Default: computed to fit."),
     parallel: int = typer.Option(
-        None, help="Conversations sharing the pool. Default: 2, for subagents."
+        None, min=1,
+        help="Conversations sharing the pool. Default: 2, for subagents.",
     ),
 ) -> None:
     """Start the engine on an installed model."""
@@ -412,7 +413,9 @@ def tui(
     """
     from .tui import run as run_tui
 
-    if not sys.stdout.isatty():
+    # Both streams: curses draws on stdout but reads the keyboard from stdin,
+    # so a piped stdin gets a screen nobody can drive.
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
         typer.echo("lllm3090 tui needs a terminal. For a script, try: lllm3090 status")
         raise typer.Exit(1)
     raise typer.Exit(run_tui(url))
