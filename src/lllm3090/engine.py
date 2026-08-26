@@ -24,6 +24,11 @@ from . import config
 #: Colour and cursor escapes llama.cpp writes when it thinks it has a terminal.
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
+#: First four bytes of every GGUF file. The engine reads no other container --
+#: the older GGML and GGJT magics were dropped from llama.cpp long before the
+#: builds this installs -- so this is the whole test.
+GGUF_MAGIC = b"GGUF"
+
 
 def clean(line: str) -> str:
     """Strip ANSI colour and collapse a progress-bar redraw to its last frame."""
@@ -106,6 +111,29 @@ def healthy() -> bool:
     return _get(f"{config.ENGINE_URL}/health", timeout=2) is not None
 
 
+def not_a_gguf(path: Path) -> str | None:
+    """Why ``path`` is not a GGUF, or ``None`` if it is one.
+
+    A pre-flight rather than a formality. llama.cpp rejects a non-GGUF itself,
+    but it does so a second or two after launch, in the log -- and the panel
+    starts the engine with ``wait=0``, so by then it has already told the user
+    "starting", written a pidfile, and gone back to polling a process that is
+    about to exit. Reading four bytes here turns that into a refusal with a
+    reason, before anything is launched.
+    """
+    try:
+        with path.open("rb") as f:
+            magic = f.read(4)
+    except OSError as e:
+        return f"could not read {path}: {e}"
+    if magic != GGUF_MAGIC:
+        return (
+            f"{path} is not a GGUF file (starts with {magic!r}, "
+            f"expected {GGUF_MAGIC!r})"
+        )
+    return None
+
+
 def stop(timeout: int = 40) -> tuple[bool, str]:
     """Terminate the engine and wait for the VRAM to actually come back."""
     target = pid()
@@ -159,8 +187,16 @@ def start(
         )
     if not Path(model_path).exists():
         return False, f"model file not found: {model_path}"
-    if mmproj and not Path(mmproj).exists():
-        return False, f"projector not found: {mmproj}"
+    bad = not_a_gguf(Path(model_path))
+    if bad:
+        return False, bad
+    if mmproj:
+        if not Path(mmproj).exists():
+            return False, f"projector not found: {mmproj}"
+        # The projector is a GGUF too, and a wrong one fails the same way.
+        bad = not_a_gguf(Path(mmproj))
+        if bad:
+            return False, bad
 
     config.STATE_DIR.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, LD_LIBRARY_PATH=str(config.LLAMA_DIR))
