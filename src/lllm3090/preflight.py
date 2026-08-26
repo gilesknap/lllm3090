@@ -7,6 +7,7 @@ invalidate every figure in the model catalogue.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -122,6 +123,37 @@ def check_models_dir() -> tuple[bool, str]:
     return True, f"{d} ({free_gb:.0f} GB free)"
 
 
+def check_linger() -> tuple[bool, str]:
+    """Whether the panel survives the user logging out.
+
+    The panel is a *user* unit, so it lives inside ``user@UID.service`` and the
+    user manager stops when the last session ends -- taking the panel, and the
+    engine in its cgroup, with it. ``loginctl enable-linger`` is what keeps it
+    running without a session.
+
+    This matters most in exactly the case the headless how-to describes:
+    isolating to ``multi-user.target`` ends the graphical session, and without
+    lingering the panel goes with it.
+    """
+    if not shutil.which("loginctl"):
+        return True, "no loginctl; not a systemd-logind system"
+    user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+    try:
+        out = subprocess.run(
+            ["loginctl", "show-user", user, "-p", "Linger", "--value"],
+            capture_output=True, text=True, timeout=5, check=False,
+        ).stdout.strip()
+    except Exception as e:
+        return True, f"could not ask loginctl ({e}); assuming it is fine"
+    if out == "yes":
+        return True, "lingering enabled; the panel survives logout"
+    return False, (
+        "lingering is off, so the panel stops when your last session ends -- "
+        f"including when you switch to a text console. Fix with: "
+        f"sudo loginctl enable-linger {user}"
+    )
+
+
 CHECKS = [
     ("os", check_os),
     ("gpu", check_gpu),
@@ -129,6 +161,7 @@ CHECKS = [
     ("vulkan", check_vulkan),
     ("engine", check_engine),
     ("models dir", check_models_dir),
+    ("linger", check_linger),
 ]
 
 

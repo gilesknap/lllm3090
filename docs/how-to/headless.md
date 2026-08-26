@@ -10,9 +10,8 @@ entry in the catalogue it is **three times** the context.
 sudo systemctl isolate multi-user.target
 ```
 
-That drops to a text console immediately. No reboot, nothing uninstalled, and
-the panel and engine keep running — they are a user service and a detached
-process, not part of the graphical target. Go back with:
+That drops to a text console immediately. No reboot and nothing uninstalled.
+Go back with:
 
 ```bash
 sudo systemctl isolate graphical.target
@@ -21,6 +20,37 @@ sudo systemctl isolate graphical.target
 Log in on the console (Ctrl-Alt-F3 if you need another one) and use
 `lllm3090` exactly as before, or reach the panel over an SSH tunnel — see
 [](remote-access.md).
+
+## First, check the panel will survive it
+
+:::{warning}
+The panel is a **user** unit. It runs inside `user@UID.service`, and the user
+manager stops when your last session ends — taking the panel and the engine in
+its cgroup with it. Isolating to `multi-user.target` ends the graphical session,
+so without lingering enabled, going headless stops the very thing you went
+headless for.
+:::
+
+```bash
+lllm3090 doctor          # the 'linger' check reports this
+```
+
+or ask directly:
+
+```bash
+loginctl show-user "$USER" -p Linger
+```
+
+If it says `Linger=no`:
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+With lingering on, the user manager is started at boot and persists with no
+session, so the panel keeps serving on a text console and across logouts. If you
+would rather not enable it, stay logged in on the console — a console session is
+a session, and the user manager lives as long as one exists.
 
 ## What it is worth
 

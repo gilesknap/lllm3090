@@ -236,6 +236,30 @@ def test_a_directory_holding_only_a_projector_is_not_a_model(tmp_path):
     assert catalog.installed(models_dir=tmp_path) == []
 
 
+def test_linger_is_reported_honestly_when_it_cannot_be_determined(monkeypatch):
+    """A missing loginctl is not a failure; a definite "no" is.
+
+    The panel is a user unit, so without lingering it stops with the last
+    session -- including the moment you isolate to multi-user.target, which is
+    exactly when the headless how-to tells you to do it.
+    """
+    from lllm3090 import preflight
+
+    monkeypatch.setattr(preflight.shutil, "which", lambda _: None)
+    ok, msg = preflight.check_linger()
+    assert ok and "loginctl" in msg
+
+    monkeypatch.setattr(preflight.shutil, "which", lambda _: "/bin/loginctl")
+
+    class R:
+        stdout = "no\n"
+
+    monkeypatch.setattr(preflight.subprocess, "run", lambda *a, **k: R())
+    ok, msg = preflight.check_linger()
+    assert not ok, "lingering off must be reported as a problem"
+    assert "enable-linger" in msg, "the message must say how to fix it"
+
+
 def test_headless_never_offers_less_than_a_desktop():
     """Freeing the compositor's VRAM can only add cache, never remove it."""
     for m in catalog.load_catalog():
