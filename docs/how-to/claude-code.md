@@ -24,6 +24,24 @@ Nothing is written to `~/.claude/settings.json`, so a plain `claude` in another
 terminal still reaches Anthropic on your normal account. You can run both side
 by side and compare them on the same task.
 
+To see exactly what would be set — against the model actually running, with the
+window actually computed — ask for it rather than reading the list above:
+
+```bash
+lllm3090 claude --print-env
+```
+
+That prints `export` lines and nothing else on stdout, so it also serves any
+harness this project has no command for:
+
+```bash
+eval "$(lllm3090 claude --print-env)"
+```
+
+Claude Code's variables are not a versioned contract — a release can add one or
+rename one. `--print-env` is what makes that checkable without starting a
+session to find out.
+
 All three model slots point at the local model deliberately, so switching with
 `/model` inside that session stays local rather than silently falling back to
 the paid API.

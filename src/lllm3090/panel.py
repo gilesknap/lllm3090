@@ -124,14 +124,14 @@ def logs(tail: int = 200):
 def clear_logs():
     """Empty the engine log, leaving the engine writing to it alone.
 
-    Truncated rather than rotated or deleted: the engine holds this file open
+    Truncated rather than rotated or deleted. The engine holds this file open
     for the life of the process, so a rename would send its output to a file
-    nothing is reading, and an unlink would send it nowhere at all. `start`
-    opens the log O_APPEND for the same reason -- the next line the engine
-    writes lands at the beginning of the emptied file rather than at the
-    offset it had reached.
+    nothing is reading, and an unlink would send it nowhere at all.
+    :func:`lllm3090.engine.start` opens the log ``O_APPEND`` for the same
+    reason -- the next line the engine writes lands at the beginning of the
+    emptied file rather than at the offset it had reached.
 
-    The tailer notices the file has shrunk and emits `rotated`, which is
+    The tailer notices the file has shrunk and emits ``rotated``, which is
     already what tells the browser to clear the pane it is showing.
     """
     if config.ENGINE_LOG.exists():
