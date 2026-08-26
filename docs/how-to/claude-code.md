@@ -4,7 +4,7 @@ llama.cpp implements Anthropic's `/v1/messages`, including streaming and tool
 calls, so Claude Code talks to it directly — no proxy, no shim.
 
 ```bash
-lllm3090 start Qwen3.8-27B
+lllm3090 start Qwen3.6-35B-A3B
 lllm3090 claude
 ```
 

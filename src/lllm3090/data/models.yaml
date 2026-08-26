@@ -31,12 +31,14 @@ models:
     expected_tok_s: 35
     chat_template: qwen3.8-27b.jinja
     verified: true
-    tags: [general, coding, recommended]
+    tags: [general, coding, dense]
     notes: >-
-      The default. Measured on this card at 35 tok/s decode and 3.5 s warm
-      time-to-first-token. Dense, so every weight is read per token -- it is
-      slower than the MoE entries but stronger per parameter. Cold prefill on a
-      very long prompt is slow under Vulkan (~2 min at 80k); warm turns are fine.
+      The dense option, and the slowest model here: 35 tok/s measured, against
+      126 for Qwen3.6-35B-A3B. Every one of its 27B parameters is read per
+      token where the sparse models read about 3B, which is the whole of the
+      difference. Take it when you want a dense model's qualities per parameter
+      and can afford a quarter of the speed. Cold prefill on a very long prompt
+      is slow under Vulkan (~2 min at 80k); warm turns are fine at 3.5 s.
 
   - id: qwen3.6-35b-a3b
     name: Qwen3.6-35B-A3B
@@ -49,14 +51,15 @@ models:
     max_ctx: 262144
     expected_tok_s: 126
     verified: true
-    tags: [general, agentic, long-context]
+    tags: [general, agentic, long-context, recommended]
     notes: >-
       Sparse: only 3B parameters are read per token, so it decodes far faster
       than its size suggests -- measured at 126 tok/s on a short prompt and
       112 at 40k, against the dense 27B's 35. Its hybrid attention also makes KV
       unusually cheap (20 KiB/token against the 27B's 64), which is what puts
-      the full 262k context in reach. Cold prefill at 40k is 21 s, warm 0.1 s.
-      The best choice for long agentic sessions.
+      the full 262k context in reach -- 212k per conversation with a slot spare
+      for a subagent. Cold prefill at 40k is 21 s, warm 0.1 s. The default
+      recommendation: fastest useful model here and the longest context.
 
   - id: qwen3.6-35b-a3b-q4ks
     name: Qwen3.6-35B-A3B-Q4KS

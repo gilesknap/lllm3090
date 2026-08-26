@@ -254,8 +254,8 @@ def setup(
         ))
     else:
         typer.echo("Nothing has been downloaded yet -- choose a model in the panel.")
-        typer.echo("Qwen3-8B (5 GB) confirms it works; Qwen3.8-27B (15 GB) is the")
-        typer.echo("one to keep.")
+        typer.echo("Qwen3-8B (5 GB) confirms it works; Qwen3.6-35B-A3B (17.7 GB)")
+        typer.echo("is the one to keep -- fastest here, and the longest context.")
 
 
 @app.command("install-service")

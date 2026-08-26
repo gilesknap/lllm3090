@@ -125,3 +125,34 @@ def test_the_agent_floor_separates_usable_models_from_unusable():
     assert "Qwen3.8-27B" in usable
     assert "Qwen3.6-35B-A3B" in usable
     assert usable, "no model can run an agent harness -- the catalogue is broken"
+
+
+def test_the_recommendation_agrees_with_the_measurements():
+    """Exactly one model is recommended, and it is defensible on the numbers.
+
+    The docs recommended the slowest model in the catalogue for a while, because
+    the advice was written before anything was measured and nothing forced the
+    two to agree. This is that forcing function.
+    """
+    models = catalog.load_catalog()
+    recommended = [m for m in models if "recommended" in m.tags]
+    assert len(recommended) == 1, f"expected one recommendation, got {recommended}"
+    pick = recommended[0]
+
+    assert pick.verified, "recommending a model whose speed was never measured"
+    assert catalog.fit(pick).fits, "recommending a model that does not fit"
+    assert catalog.plan(pick).per_session > config.AGENT_PROMPT_FLOOR, (
+        "the recommended model cannot hold an agent harness's system prompt"
+    )
+
+    faster = [
+        m.name for m in models
+        if m.verified
+        and catalog.fit(m).fits
+        and (m.expected_tok_s or 0) > (pick.expected_tok_s or 0)
+        and catalog.plan(m).per_session >= catalog.plan(pick).per_session
+    ]
+    assert not faster, (
+        f"{faster} are faster than {pick.name} with no less context -- "
+        "the recommendation should move or the reason be written down"
+    )
