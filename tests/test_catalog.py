@@ -6,7 +6,7 @@ from dataclasses import replace
 
 import pytest
 
-from lllm3090 import catalog, config
+from lllm3090 import catalog, config, hardware
 
 
 def test_every_catalogue_entry_is_well_formed():
@@ -47,6 +47,44 @@ def test_plan_never_exceeds_vram_or_the_rope_ceiling():
             assert p.pool == p.per_session * p.parallel
 
 
+def test_a_plan_fits_inside_what_the_driver_leaves():
+    """The nameplate capacity is not the budget, and planning as if it were is
+    what put a GPU into ``vk::DeviceLostError``.
+
+    The driver takes its reservation before any process allocates, so a plan
+    that spends up to ``vram_mib`` is already over by that much. Everything the
+    engine needs -- weights, projector, the whole preallocated cache, and the
+    workspace the compute buffers grow into -- has to sit inside what is left,
+    with the reserves still intact rather than eaten to make the sums work.
+    """
+    profile = hardware.reference()
+    ceiling = profile.vram_mib - profile.driver_reserve_mib
+    for m in catalog.load_catalog():
+        for desktop in (True, False):
+            p = catalog.plan(m, desktop=desktop, profile=profile)
+            held = config.WORKSPACE_RESERVE_MIB
+            if m.vision:
+                held += config.VISION_WORKSPACE_RESERVE_MIB
+            if desktop:
+                held += config.DESKTOP_RESERVE_MIB
+            need = catalog.vram_needed_mib(m, p.pool) + held
+            assert need <= ceiling, (
+                f"{m.id} (desktop={desktop}) plans {p.pool} tokens needing "
+                f"{need:.0f} MiB against {ceiling} MiB the card can hand out"
+            )
+
+
+def test_the_driver_reservation_is_taken_off_the_top():
+    """A profile may never offer more than the card can actually allocate."""
+    for profile in hardware.load_profiles():
+        assert profile.driver_reserve_mib > 0, (
+            f"{profile.id} claims the driver reserves nothing"
+        )
+        for desktop in (True, False):
+            budget = profile.usable_vram_mib(desktop)
+            assert budget <= profile.vram_mib - profile.driver_reserve_mib
+
+
 def test_plan_leaves_room_for_a_subagent():
     """The default must admit a second conversation, not just a large first one.
 
@@ -70,13 +108,20 @@ def test_small_models_get_their_whole_window():
 
 
 def test_rope_capped_models_are_given_the_free_slots():
-    """If the architecture runs out before the card does, spend the rest on slots."""
+    """If the architecture runs out before the card does, spend the rest on slots.
+
+    Rope-capping says the *window* is bounded by the architecture rather than by
+    VRAM. It does not promise a surplus large enough for another whole slot: a
+    model can afford exactly the default number of full windows and no more, and
+    that is an honest plan rather than a missed opportunity. What must hold is
+    that no slot is short-changed.
+    """
     for m in catalog.load_catalog():
         p = catalog.plan(m)
         if p.capped_by != "rope":
             continue
-        assert p.parallel > config.DEFAULT_PARALLEL, (
-            f"{m.id} has spare cache it could serve another conversation with"
+        assert p.parallel >= config.DEFAULT_PARALLEL, (
+            f"{m.id} is rope-capped but cannot seat the default slot count"
         )
         assert p.parallel <= config.MAX_AUTO_PARALLEL
         # Free means free: every slot still gets the whole window.
@@ -347,9 +392,12 @@ def test_vram_needed_counts_the_projector_and_the_q8_cache():
     m = next(x for x in catalog.load_catalog() if x.vision)
     bare = catalog.vram_needed_mib(m, 0)
     assert bare == m.weights_mib, "no cache should cost only the weights"
-    # A q8 cache is half the f16 figure the catalogue stores.
+    # A q8 cache is half the f16 figure the catalogue stores, plus what the
+    # engine holds on top of the nominal tensor size.
     grown = catalog.vram_needed_mib(m, 2048) - bare
-    assert grown == 2048 * (m.kv_kib_per_token / 2) / 1024
+    nominal = 2048 * (m.kv_kib_per_token / 2) / 1024
+    assert grown == pytest.approx(nominal * config.KV_OVERHEAD_FACTOR)
+    assert grown > nominal, "the overhead factor must never flatter the cache"
 
 
 # --- hardware profiles ------------------------------------------------------

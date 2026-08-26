@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib import resources
 
 import yaml
@@ -40,10 +40,21 @@ class Profile:
     #: the catalogue can still be inspected. Nothing about such a profile
     #: describes a card in this machine.
     present: bool = True
+    #: What the driver has already taken out of ``vram_mib``. Read from the
+    #: running card where possible, otherwise the documented default. See
+    #: ``config.DRIVER_RESERVE_MIB``.
+    driver_reserve_mib: int = config.DRIVER_RESERVE_MIB
 
     def usable_vram_mib(self, desktop: bool = True) -> int:
-        """VRAM available for weights plus KV cache."""
-        budget = self.vram_mib - config.WORKSPACE_RESERVE_MIB
+        """VRAM available for weights plus KV cache.
+
+        ``vram_mib`` is the nameplate capacity, which is not what a process may
+        allocate: the driver has already reserved part of it. Subtracting that
+        first is what keeps the rest of this arithmetic honest -- everything
+        below is spent against a number the card can actually hand out.
+        """
+        budget = self.vram_mib - self.driver_reserve_mib
+        budget -= config.WORKSPACE_RESERVE_MIB
         if desktop:
             budget -= config.DESKTOP_RESERVE_MIB
         return budget
@@ -71,6 +82,21 @@ def _smi(query: str) -> str | None:
         return None
 
 
+def _reserve(reported: str | None) -> int:
+    """The driver's reservation, preferring the running card's own figure.
+
+    A card that cannot be asked falls back to the documented default rather
+    than to zero: zero is the assumption that produced a plan the GPU could not
+    honour, and it is never the safe direction to guess in.
+    """
+    if reported is None:
+        return config.DRIVER_RESERVE_MIB
+    try:
+        return max(0, int(reported))
+    except ValueError:
+        return config.DRIVER_RESERVE_MIB
+
+
 def detect() -> Profile:
     """The profile for the GPU in this machine.
 
@@ -86,6 +112,7 @@ def detect() -> Profile:
     name = _smi("name")
     cap = _smi("compute_cap")
     total = _smi("memory.total")
+    reserved = _smi("memory.reserved")
     profiles = load_profiles()
 
     if name is None or total is None:
@@ -114,7 +141,7 @@ def detect() -> Profile:
             continue
         same_size = abs(p.vram_mib - vram) <= 512
         if same_size and (cap is None or p.compute_capability == cap):
-            return p
+            return replace(p, driver_reserve_mib=_reserve(reserved))
 
     return Profile(
         id="detected",
@@ -127,6 +154,7 @@ def detect() -> Profile:
         notes="Not a profile shipped with lllm3090. Fit is computed from the "
               "reported memory; speeds in the catalogue were measured elsewhere.",
         detected=True,
+        driver_reserve_mib=_reserve(reserved),
     )
 
 

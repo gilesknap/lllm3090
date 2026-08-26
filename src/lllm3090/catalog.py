@@ -132,7 +132,10 @@ def fit(
         # Total tokens VRAM can hold, rounded down to whole 1024-token pages.
         # Deliberately NOT clamped to the RoPE ceiling: that bounds one
         # conversation, while this is the pool they all share. plan() applies it.
-        tokens = spare * 1024 / kib_per_token
+        # The nominal per-token figure is the tensor arithmetic; what the engine
+        # actually holds resident is larger, so it is what gets divided into the
+        # budget. See config.KV_OVERHEAD_FACTOR.
+        tokens = spare * 1024 / (kib_per_token * config.KV_OVERHEAD_FACTOR)
         return int(math.floor(tokens / 1024) * 1024)
 
     return Fit(
@@ -254,9 +257,11 @@ def installed(models_dir: Path | None = None) -> list[dict[str, Any]]:
 def vram_needed_mib(model: Model, ctx: int) -> float:
     """Roughly what a pool of ``ctx`` tokens costs, weights and projector included.
 
-    The q8 cache halves the per-token figure, which is stored at f16.
+    The q8 cache halves the per-token figure, which is stored at f16, and
+    ``config.KV_OVERHEAD_FACTOR`` restores what the engine holds on top of it.
     """
-    return model.weights_mib + ctx * (model.kv_kib_per_token / 2) / 1024
+    per_token = (model.kv_kib_per_token / 2) * config.KV_OVERHEAD_FACTOR
+    return model.weights_mib + ctx * per_token / 1024
 
 
 def startup_vram_mib(model: Model, ctx: int) -> float:
