@@ -44,13 +44,22 @@ tokens of headroom.
 
 ## Move to a real model
 
-`Qwen3-8B` is a smoke test. For actual work, download **Qwen3.8-27B** (15 GB) —
-a dense 27B measured on this card at 35 tok/s with about 200k of context — or
-**Qwen3.6-35B-A3B** (17.7 GB), a sparse model that decodes faster and, because
-its attention makes the KV cache unusually cheap, reaches the full 262k window.
+`Qwen3-8B` is a smoke test — and too small for an agent harness, since its 32k
+window cannot hold Claude Code's ~40k system prompt. For actual work:
 
-Which suits you is a real question rather than a matter of size:
-[](../explanations/dense-vs-moe.md).
+**`Qwen3.6-35B-A3B`** (17.7 GB) is the default recommendation. Measured at
+**126 tok/s**, and its hybrid attention makes the KV cache cheap enough
+(20 KiB/token) to reach the model's full **262k** context — 212k per
+conversation with a slot spare for a subagent.
+
+**`gpt-oss-20b`** (12.1 GB) is faster still at **160 tok/s** and leaves most of
+the card free, at 128k of context across four slots. Worth having.
+
+**`Qwen3.8-27B`** (15.4 GB) is the dense option. It is the *slowest* model here
+at 35 tok/s — every one of its 27B parameters is read per token, where the
+sparse models read about 3B — and it gives 101k per conversation. Take it if
+you want a dense model's qualities and can afford a quarter of the speed; the
+comparison is [](../explanations/dense-vs-moe.md).
 
 ## Free the card
 
