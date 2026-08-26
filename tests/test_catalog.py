@@ -152,7 +152,13 @@ def test_the_recommendation_agrees_with_the_measurements():
         and (m.expected_tok_s or 0) > (pick.expected_tok_s or 0)
         and catalog.plan(m).per_session >= catalog.plan(pick).per_session
     ]
-    assert not faster, (
-        f"{faster} are faster than {pick.name} with no less context -- "
-        "the recommendation should move or the reason be written down"
+    # The exception the docstring allows, made enforceable: a faster model with
+    # at least as much context may be passed over, but only if the recommended
+    # entry's own note names it and says why -- in the catalogue, where the
+    # panel shows it, rather than in a commit message nobody reads.
+    unexplained = [n for n in faster if n not in pick.notes]
+    assert not unexplained, (
+        f"{unexplained} are faster than {pick.name} with no less context -- "
+        f"either the recommendation moves, or {pick.name}'s notes name them "
+        "and say why it stays"
     )

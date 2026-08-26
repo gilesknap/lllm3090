@@ -255,7 +255,9 @@ def setup(
     else:
         typer.echo("Nothing has been downloaded yet -- choose a model in the panel.")
         typer.echo("Qwen3-8B (5 GB) confirms it works; Qwen3.6-35B-A3B (17.7 GB)")
-        typer.echo("is the one to keep -- fastest here, and the longest context.")
+        typer.echo("is the one to keep -- 126 tok/s and the longest context here,")
+        typer.echo("212k per conversation. Only gpt-oss-20b decodes faster, at 160,")
+        typer.echo("and it has less room to work in.")
 
 
 @app.command("install-service")

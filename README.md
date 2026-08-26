@@ -27,8 +27,10 @@ It touches nothing outside `$HOME` except `libvulkan1`, and downloads **no model
 weights** — you pick those from the panel.
 
 Then open <http://127.0.0.1:8080>, download `Qwen3-8B` (5 GB) to prove the
-install works, and `Qwen3.6-35B-A3B` (17.7 GB) for real use — it is the fastest
-model here at 126 tok/s and the only one that reaches a full 262k context.
+install works, and `Qwen3.6-35B-A3B` (17.7 GB) for real use — at 126 tok/s
+it is the fastest model that also reaches a full 262k context, which is what
+agentic work needs. `gpt-oss-20b` decodes faster still, at 160, in half the
+room.
 
 ## Use
 

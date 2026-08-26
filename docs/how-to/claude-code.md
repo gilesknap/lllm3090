@@ -32,21 +32,28 @@ the paid API.
 
 The honest version: it works, and it is not the same experience.
 
-- **Speed is fine.** 35 tok/s on the 27B is perfectly usable for reading code
-  and answering questions.
+- **Speed is fine.** 126 tok/s on `Qwen3.6-35B-A3B` — the model the command
+  above starts — is comfortably faster than you read. The dense `Qwen3.8-27B`
+  manages 35, which is still usable for reading code and answering questions.
 - **The first turn on a big repo is slow.** Vulkan prefill costs about two
   minutes at 80k tokens. Every turn after that returns in a few seconds,
   because the prefix cache holds the prompt.
 - **Context is the real limit, not speed.** Claude Code's system prompt and tool
   definitions are ~40k tokens on *every* turn before your work starts. A local
   model also tends to spend far more of its window reasoning than a frontier
-  model does on the same question.
+  model does on the same question. This is why the recommendation is the
+  35B-A3B: 212k per conversation leaves room for the work after the harness has
+  taken its share.
 - **Check quantities, not existence.** In a measured comparison the local model
   produced no hallucinations, but did inflate quantifiers — "called everywhere"
   for two call sites. The shape of its claims was right; the magnitudes were
   asserted rather than counted.
 
-## A patched chat template
+## A patched chat template — only for `Qwen3.8-27B`
+
+This section applies to the dense option, not to `Qwen3.6-35B-A3B`, which needs
+no patch and is what the command at the top starts. Read it if you switch to
+the 27B, or if you add a model of your own whose template rejects Claude Code.
 
 `Qwen3.8-27B` is served with a modified chat template, shipped as
 `lllm3090/data/qwen3.8-27b.jinja`. Its own template counts the system messages

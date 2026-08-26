@@ -59,7 +59,9 @@ models:
       unusually cheap (20 KiB/token against the 27B's 64), which is what puts
       the full 262k context in reach -- 212k per conversation with a slot spare
       for a subagent. Cold prefill at 40k is 21 s, warm 0.1 s. The default
-      recommendation: fastest useful model here and the longest context.
+      recommendation: the fastest model that also reaches a full 262k context.
+      gpt-oss-20b decodes faster at 160 tok/s, in 128k of room -- take that one
+      if the work fits and speed matters more than the window.
 
   - id: qwen3.6-35b-a3b-q4ks
     name: Qwen3.6-35B-A3B-Q4KS
