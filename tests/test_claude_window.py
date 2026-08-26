@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 from typer.testing import CliRunner
 
-from lllm3090 import catalog, cli
+from lllm3090 import catalog, cli, config
 
 runner = CliRunner()
 
@@ -163,6 +163,40 @@ def test_the_engine_being_down_is_reported_before_anything_is_printed(
     result = runner.invoke(cli.app, ["claude", "--print-env"])
     assert result.exit_code == 1
     assert "export" not in result.stdout
+
+
+def test_the_subagent_cap_leaves_a_slot_for_the_parent(launched):
+    """A two-slot engine can hold the agent and one subagent, and no more.
+
+    Claude Code's own default is 20. Overshooting is not refused by llama.cpp:
+    it queues, and each subagent prefills into whichever slot it lands in, so
+    the limit would otherwise be discovered as the model being slow.
+    """
+    def cap(slots):
+        return cli.claude_env("M", 65536, slots)["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"]
+
+    assert cap(2) == "1"
+    assert cap(4) == "3"
+    assert cap(1) == "1", "one slot still has to allow one subagent, not zero"
+    assert cap(None) == str(config.DEFAULT_PARALLEL - 1), "the default pool"
+
+
+def test_the_cap_comes_from_the_engine_that_is_actually_running(
+    launched, monkeypatch
+):
+    """Not from the catalogue, and not from this project's own default: the
+    engine may have been started with --parallel overridden."""
+    monkeypatch.setattr(cli.engine, "served_slots", lambda: 4)
+    result = runner.invoke(cli.app, ["claude"])
+    assert result.exit_code == 0, result.output
+    assert launched["env"]["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"] == "3"
+
+
+def test_an_engine_that_will_not_say_does_not_stop_the_launch(launched, monkeypatch):
+    monkeypatch.setattr(cli.engine, "served_slots", lambda: None)
+    result = runner.invoke(cli.app, ["claude"])
+    assert result.exit_code == 0, result.output
+    assert launched["env"]["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"] == "1"
 
 
 def test_every_model_slot_points_at_the_local_model(launched):

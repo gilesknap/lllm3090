@@ -422,7 +422,7 @@ def tui(
     raise typer.Exit(run_tui(url))
 
 
-def claude_env(model: str, window: int) -> dict[str, str]:
+def claude_env(model: str, window: int, slots: int | None = None) -> dict[str, str]:
     """The environment Claude Code is launched with, in one place.
 
     Claude Code's variables are not a versioned contract: a release can add
@@ -437,6 +437,10 @@ def claude_env(model: str, window: int) -> dict[str, str]:
     All three model slots point at the local model deliberately: switching
     with ``/model`` inside that session then stays local rather than falling
     back to the paid API.
+
+    ``slots`` is what the engine says it can hold at once, from
+    :func:`lllm3090.engine.served_slots`. ``None`` means it would not say,
+    and the pool this project starts by default is assumed.
     """
     return {
         "ANTHROPIC_BASE_URL": config.ENGINE_URL,
@@ -449,6 +453,15 @@ def claude_env(model: str, window: int) -> dict[str, str]:
         # The PER-CONVERSATION window, not the pool the slots share.
         "CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(window),
         "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "32768",
+        # One slot is the parent's, so the rest are what a fan-out has to fit
+        # into. Claude Code's own default is 20, which against a two-slot pool
+        # is a promise of twenty concurrent conversations where there is room
+        # for two. Overshooting is not refused by llama.cpp -- it queues, and
+        # each subagent prefills into whichever slot it lands in -- so without
+        # this the limit is discovered as the model being slow.
+        "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": str(
+            max(1, (slots or config.DEFAULT_PARALLEL) - 1)
+        ),
     }
 
 
@@ -521,7 +534,7 @@ def claude(
             "prompt. Expect frequent compaction."
         )
 
-    settings = claude_env(model, int(window))
+    settings = claude_env(model, int(window), engine.served_slots())
     if print_env:
         # Shell-shaped so it can drive a harness this command does not know
         # about: `eval "$(lllm3090 claude --print-env)"`, then run that tool.

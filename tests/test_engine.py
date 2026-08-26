@@ -221,6 +221,27 @@ def test_served_model_reads_both_response_shapes(monkeypatch, payload, expected)
     assert engine.served_model() == expected
 
 
+@pytest.mark.parametrize(
+    "payload, expected",
+    [
+        ({"total_slots": 2, "model_alias": "Qwen3.6-35B-A3B"}, 2),
+        ({"total_slots": 8}, 8),
+        ({"total_slots": 0}, None),          # a pool that holds nothing is no answer
+        ({"total_slots": "two"}, None),      # nor is a number that is not one
+        ({}, None),                          # an engine too old to say
+        (None, None),                        # not answering
+        ([{"total_slots": 2}], None),        # not the shape /props returns
+    ],
+)
+def test_served_slots_is_what_the_engine_says_or_nothing(
+    monkeypatch, payload, expected
+):
+    """Asked, not derived from --parallel: a start can override that, and this
+    is what decides how many agents can be resident at once."""
+    monkeypatch.setattr(engine, "_get", lambda url, timeout=3.0: payload)
+    assert engine.served_slots() == expected
+
+
 def test_healthy_is_false_when_nothing_is_listening(monkeypatch):
     """A real socket to a closed port: refused, caught, reported as unhealthy."""
     monkeypatch.setattr(config, "ENGINE_URL", "http://127.0.0.1:1")

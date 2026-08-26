@@ -75,6 +75,26 @@ count exists to prevent.
 So with `Qwen3.8-27B` at the default, Claude Code sees 101k and compacts there,
 while the engine holds 202k across two slots.
 
+It is also told **how many conversations there is room for**. Claude Code's own
+default is 20 concurrent subagents, which against a two-slot pool is a promise
+of twenty conversations where there is room for two. `lllm3090 claude` asks the
+running engine (`GET /props` → `total_slots`), keeps one slot for the parent,
+and sets `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` to the rest — one subagent at
+the default, three at `--parallel 4`.
+
+Overshooting the slot count is not an error, which is why this is worth doing:
+llama.cpp queues the excess rather than refusing it, and each subagent prefills
+into whichever slot it lands in, so the limit arrives disguised as the model
+being slow. With the cap, Claude Code serialises deliberately instead.
+
+:::{note}
+The cap governs subagents, not requests. `/btw` — Claude Code's side-question
+command — is a second concurrent request carrying the conversation, and it is
+not a subagent, so nothing here restrains it. On two slots, a `/btw` issued
+while a subagent is running waits for a slot and then re-prefills the whole
+conversation into it.
+:::
+
 ## Overriding the pool directly
 
 `--ctx` sets the whole pool and bypasses the planner:

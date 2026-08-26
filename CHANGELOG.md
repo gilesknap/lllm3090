@@ -28,6 +28,12 @@ change is only visible in the source it does not need a line here.
   arrive.
 - An explanation of what else is out there and when to use it instead
   (`docs/explanations/landscape.md`).
+- `lllm3090 claude` tells Claude Code how many conversations the engine can
+  actually hold, by asking it (`/props` → `total_slots`) and keeping one slot
+  for the parent. Claude Code's own default is 20 concurrent subagents, which
+  on a two-slot engine is a fan-out ten times wider than the card has room
+  for — and llama.cpp queues the excess rather than refusing it, so it arrived
+  as the model being slow.
 
 ### Changed
 
