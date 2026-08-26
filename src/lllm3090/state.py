@@ -45,7 +45,7 @@ def installed_models() -> list[dict[str, Any]]:
 
     Both front ends now draw one merged list, so a checkpoint the catalogue has
     never heard of sits in it beside the curated ones and has to say the same
-    things they do. Its window comes from :func:`catalog.launch_plan` -- the
+    things they do. Its window comes from ``catalog.launch_plan`` -- the
     same call a start makes -- rather than from each renderer restating
     ``UNKNOWN_MODEL_CTX`` in its own language, which is how the console and the
     browser would end up describing one model two ways.
