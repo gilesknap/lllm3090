@@ -1,0 +1,68 @@
+"""One description of the machine, in one shape, for every front end.
+
+The panel serves this over HTTP for a browser; the terminal UI builds the same
+dict in this process when no panel is running. It lives here rather than inside
+the FastAPI handler so that the two cannot drift -- a field the panel gains is
+a field the terminal UI can render without anyone having to remember it.
+
+Nothing here starts, stops or downloads anything. Every call is a read of the
+catalogue's arithmetic, a pidfile, or ``nvidia-smi``, which is what makes it
+safe to run from a process that is not the panel.
+"""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+from typing import Any
+
+from . import catalog, config, downloads, engine, hardware
+from ._version import __version__
+
+
+def vram() -> dict[str, int] | None:
+    """Used and total VRAM in MiB as ``nvidia-smi`` reports it, or None.
+
+    None means the question could not be asked -- no driver, no card, a
+    container -- rather than zero, which would render as an empty card.
+    """
+    if not shutil.which("nvidia-smi"):
+        return None
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.total",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10, check=True,
+        ).stdout.strip().splitlines()[0]
+        used, total = (int(x.strip()) for x in out.split(","))
+        return {"used_mb": used, "total_mb": total}
+    except Exception:
+        return None
+
+
+def snapshot() -> dict[str, Any]:
+    """Everything a front end needs to draw the machine, in one call.
+
+    Deliberately excludes the panel's ``busy`` and ``last``: those describe a
+    server process rather than a machine, and there is nothing honest to say
+    about them when no panel is running.
+    """
+    profile = hardware.detect()
+    return {
+        "version": __version__,
+        "card": {
+            "name": profile.name,
+            "vram_gb": round(profile.vram_mib / 1024),
+            "measured": profile.measured,
+            "present": profile.present,
+            "desktop": hardware.graphical(),
+            "reference": hardware.reference().name,
+        },
+        "engine": engine.status(),
+        "endpoint": config.ENGINE_URL,
+        "vram": vram(),
+        "installed": catalog.installed(),
+        "catalog": catalog.catalog_for_panel(),
+        "downloads": downloads.all_downloads(),
+        "models_dir": str(config.MODELS_DIR),
+    }

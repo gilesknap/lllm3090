@@ -96,7 +96,10 @@ class Plan:
     pool: int
     parallel: int
     per_session: int
-    capped_by: str  # "vram" | "rope"
+    #: What stopped the window growing -- the card, the architecture, or
+    #: nothing at all. ``default`` is a GGUF the catalogue has never seen,
+    #: whose KV cost is unknown, so its window is a fixed conservative figure.
+    capped_by: str  # "vram" | "rope" | "default"
 
     @property
     def summary(self) -> str:
@@ -177,6 +180,38 @@ def plan(
     # Round the per-session window down to whole pages so the pool divides evenly.
     share = max(1024, (share // 1024) * 1024)
     return Plan(share * parallel, parallel, share, "vram")
+
+
+#: Per-slot window for a GGUF that is not in the catalogue.
+#:
+#: Nothing is known about its KV cost per token, so there is no arithmetic to
+#: do. Guessing high produces an engine that loads and then fails every request
+#: out of device memory, which is the expensive mistake; this is the cheap one.
+UNKNOWN_MODEL_CTX = 32768
+
+
+def launch_plan(name: str, parallel: int | None = None) -> Plan:
+    """How to start an installed model, whether or not the catalogue knows it.
+
+    Every front end -- the CLI, the panel and the terminal UI -- has to answer
+    the same question before it can launch anything, and they must answer it
+    identically: a model started from the console and the same model started
+    from the panel are the same engine on the same card.
+    """
+    if parallel is not None and parallel < 1:
+        # Zero would be swallowed by the default below and negative divides the
+        # pool the wrong way, producing a Plan the engine would be started with.
+        raise ValueError(f"parallel must be at least 1, not {parallel}")
+    parallel = parallel or config.DEFAULT_PARALLEL
+    known = next((m for m in load_catalog() if m.name == name), None)
+    if known is not None:
+        # Whether a desktop is holding VRAM is a property of the machine, not
+        # of the front end asking, so it is resolved here rather than at each
+        # call site -- otherwise the console and the panel could size the same
+        # model differently on the same card.
+        return plan(known, parallel, desktop=hardware.graphical())
+    pool = UNKNOWN_MODEL_CTX * parallel
+    return Plan(pool, parallel, UNKNOWN_MODEL_CTX, "default")
 
 
 def load_catalog() -> list[Model]:

@@ -221,7 +221,8 @@ def start(
     model: str = typer.Argument(..., help="Directory name under the models dir."),
     ctx: int = typer.Option(None, help="Total KV pool. Default: computed to fit."),
     parallel: int = typer.Option(
-        None, help="Conversations sharing the pool. Default: 2, for subagents."
+        None, min=1,
+        help="Conversations sharing the pool. Default: 2, for subagents.",
     ),
 ) -> None:
     """Start the engine on an installed model."""
@@ -229,18 +230,16 @@ def start(
     if entry is None:
         typer.echo(f"{model!r} is not installed. Try: lllm3090 models")
         raise typer.Exit(1)
-    parallel = parallel or config.DEFAULT_PARALLEL
     known = next((m for m in catalog.load_catalog() if m.name == model), None)
     if ctx is None:
-        if known is not None:
-            p = catalog.plan(known, parallel, desktop=hardware.graphical())
-            ctx, parallel = p.pool, p.parallel
-            typer.echo(f"Context plan: {p.summary}")
-        else:
-            ctx = 32768 * parallel
-    # The plan plays against a fixed reserve; this is the measurement. Sizing
-    # for a text console and then starting under a desktop is the case that
-    # loads, reports itself healthy, and fails every request out of memory.
+        p = catalog.launch_plan(model, parallel)
+        ctx, parallel = p.pool, p.parallel
+        typer.echo(f"Context plan: {p.summary}")
+    else:
+        parallel = parallel or config.DEFAULT_PARALLEL
+    # The plan is computed against a fixed reserve; this is the measurement.
+    # Sizing on a text console and then starting under a desktop is the case
+    # that loads, reports itself healthy, and fails every request out of memory.
     engine.stop()
     warning = catalog.free_vram_warning(known, ctx)
     if warning:
@@ -398,6 +397,28 @@ def panel(
 
     config.STATE_DIR.mkdir(parents=True, exist_ok=True)
     uvicorn.run("lllm3090.panel:app", host="127.0.0.1", port=port, log_level="warning")
+
+
+@app.command()
+def tui(
+    url: str = typer.Option(
+        None, help="Panel to drive. Default: the local one, if it is running."
+    ),
+) -> None:
+    """The control panel on a text console, for a machine with no browser.
+
+    Drives the panel over HTTP when it is running, and falls back to this
+    process for everything that has a local answer -- which is all of it except
+    downloading, since that is state the panel owns.
+    """
+    from .tui import run as run_tui
+
+    # Both streams: curses draws on stdout but reads the keyboard from stdin,
+    # so a piped stdin gets a screen nobody can drive.
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        typer.echo("lllm3090 tui needs a terminal. For a script, try: lllm3090 status")
+        raise typer.Exit(1)
+    raise typer.Exit(run_tui(url))
 
 
 @app.command()

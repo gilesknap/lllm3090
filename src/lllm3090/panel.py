@@ -10,19 +10,15 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
-import shutil
-import subprocess
 from contextlib import asynccontextmanager
 from importlib import resources
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
-from . import catalog, config, downloads, engine, hardware
+from . import catalog, config, downloads, engine, state
 from ._version import __version__
 
-ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -41,51 +37,10 @@ _busy = asyncio.Lock()
 _last: dict = {"action": None, "ok": None, "detail": ""}
 
 
-def clean(line: str) -> str:
-    """Strip ANSI colour and collapse a progress-bar redraw to its last frame."""
-    line = ANSI.sub("", line)
-    if "\r" in line:
-        line = line.split("\r")[-1]
-    return line.rstrip("\n")
-
-
-def vram() -> dict | None:
-    if not shutil.which("nvidia-smi"):
-        return None
-    try:
-        out = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.used,memory.total",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=10, check=True,
-        ).stdout.strip().splitlines()[0]
-        used, total = (int(x.strip()) for x in out.split(","))
-        return {"used_mb": used, "total_mb": total}
-    except Exception:
-        return None
-
-
 @app.get("/api/status")
 def status():
-    profile = hardware.detect()
-    return {
-        "version": __version__,
-        "card": {
-            "name": profile.name,
-            "vram_gb": round(profile.vram_mib / 1024),
-            "measured": profile.measured,
-            "present": profile.present,
-            "desktop": hardware.graphical(),
-            "reference": hardware.reference().name,
-        },
-        "engine": engine.status(),
-        "vram": vram(),
-        "busy": _busy.locked(),
-        "last": _last,
-        "installed": catalog.installed(),
-        "catalog": catalog.catalog_for_panel(),
-        "downloads": downloads.all_downloads(),
-        "models_dir": str(config.MODELS_DIR),
-    }
+    """The machine, plus the two things only this process can answer for."""
+    return {**state.snapshot(), "busy": _busy.locked(), "last": _last}
 
 
 @app.post("/api/start")
@@ -93,20 +48,23 @@ async def start(model: str, ctx: int | None = None, parallel: int | None = None)
     entry = next((m for m in catalog.installed() if m["name"] == model), None)
     if entry is None:
         return JSONResponse({"error": f"{model!r} is not installed"}, status_code=400)
+    if parallel is not None and parallel < 1:
+        # A query string is not a form the page controls, so this is checked
+        # here rather than left to the ValueError catalog.launch_plan raises.
+        return JSONResponse(
+            {"error": "parallel must be at least 1"}, status_code=400
+        )
     if _busy.locked():
         return JSONResponse({"error": "busy"}, status_code=409)
 
     # Size the pool from what actually fits rather than from a stored default,
     # and leave room for the concurrent conversations an agent needs.
-    parallel = parallel or config.DEFAULT_PARALLEL
     known = next((m for m in catalog.load_catalog() if m.name == model), None)
     if ctx is None:
-        if known is not None:
-            p = catalog.plan(known, parallel, desktop=hardware.graphical())
-            ctx, parallel = p.pool, p.parallel
-        else:
-            # An unknown GGUF: no KV figure to plan with, so be conservative.
-            ctx = 32768 * parallel
+        p = catalog.launch_plan(model, parallel)
+        ctx, parallel = p.pool, p.parallel
+    else:
+        parallel = parallel or config.DEFAULT_PARALLEL
 
     async with _busy:
         await asyncio.to_thread(engine.stop)
@@ -158,12 +116,7 @@ def cancel_download(model_id: str):
 
 @app.get("/api/logs")
 def logs(tail: int = 200):
-    log = config.ENGINE_LOG
-    if not log.exists():
-        return {"lines": []}
-    with log.open("r", errors="replace") as f:
-        buf = f.readlines()[-tail:]
-    return {"lines": [clean(line) for line in buf if clean(line).strip()]}
+    return {"lines": engine.tail(tail)}
 
 
 async def _tail_stream():
@@ -179,7 +132,11 @@ async def _tail_stream():
         st = log.stat()
         ino = st.st_ino
         start_at = max(0, st.st_size - 4000)
-        with log.open("r", errors="replace") as f:
+        # newline="": universal newlines would turn a progress redraw's \r into
+        # \n, splitting one line into a frame per update. engine.clean collapses
+        # the redraw, but only while the frames are still on the same line, and
+        # engine.tail reads the same file the same way.
+        with log.open("r", errors="replace", newline="") as f:
             f.seek(start_at)
             if start_at:
                 f.readline()
@@ -195,18 +152,17 @@ async def _tail_stream():
                 ino, pos, pending = st.st_ino, 0, ""
                 yield "event: rotated\ndata: --- engine restarted ---\n\n"
             if st.st_size > pos:
-                with log.open("r", errors="replace") as f:
+                with log.open("r", errors="replace", newline="") as f:
                     f.seek(pos)
                     chunk = f.read()
                     pos = f.tell()
                 data = pending + chunk
-                if data.endswith("\n"):
-                    lines, pending = data.splitlines(), ""
-                else:
-                    parts = data.split("\n")
-                    lines, pending = parts[:-1], parts[-1]
+                # Split on "\n" alone: splitlines() breaks on \r as well, which
+                # is exactly the character this stream has to keep hold of.
+                parts = data.split("\n")
+                lines, pending = parts[:-1], parts[-1]
                 for raw in lines:
-                    line = clean(raw)
+                    line = engine.clean(raw)
                     if line.strip():
                         yield f"data: {json.dumps(line)}\n\n"
             else:

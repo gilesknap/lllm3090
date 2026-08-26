@@ -14,6 +14,7 @@ lllm3090 <command> [options]
 | `bench <name>` | Benchmark a model and print a profile block to contribute |
 | `status` | Whether the engine is running, on what, and whether it answers yet |
 | `panel [--port N]` | Run the control panel in the foreground |
+| `tui [--url U]` | The panel drawn in the terminal, for a console with no browser |
 | `claude [args…]` | Launch Claude Code against the local engine |
 
 See [](../how-to/context-and-slots.md) for choosing between them.
