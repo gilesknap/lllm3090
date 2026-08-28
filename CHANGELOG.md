@@ -10,6 +10,10 @@ change is only visible in the source it does not need a line here.
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.6.0] — 2026-08-28
+
 ### Added
 
 - `lllm3090 sweep` — survey the published GGUF models and price them against
@@ -30,11 +34,12 @@ change is only visible in the source it does not need a line here.
 
 ### Fixed
 
-- Three catalogue entries quoted context figures in their notes that were
-  correct when written and stale by the time the driver reserve and the KV
-  overhead factor landed — a row could say 34k in its context column and 61k in
-  its prose, with nothing to say which was current. The notes now carry
-  judgement and leave the numbers to the arithmetic, and a test keeps it that
+- Six catalogue entries asserted figures in their notes that the panel
+  computes per card — three quoted a context window, three a slot count. They
+  were correct when written and stale by the time the driver reserve and the KV
+  overhead factor landed, so a row could say 34k in its context column and 61k
+  in its prose with nothing to say which was current. The notes now carry
+  judgement and leave every number to the arithmetic, and a test keeps it that
   way.
 - `lllm3090 models` showed an installed model as `installed` whatever the card
   made of it, so a model that could not hold an agent's system prompt read as a
@@ -136,7 +141,8 @@ First release. The package, the installer, the control panel and the model
 catalogue, with a KV pool sized for concurrent conversations rather than for
 one session.
 
-[Unreleased]: https://github.com/gilesknap/lllm3090/compare/0.5.0...HEAD
+[Unreleased]: https://github.com/gilesknap/lllm3090/compare/0.6.0...HEAD
+[0.6.0]: https://github.com/gilesknap/lllm3090/compare/0.5.0...0.6.0
 [0.5.0]: https://github.com/gilesknap/lllm3090/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/gilesknap/lllm3090/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/gilesknap/lllm3090/compare/0.2.0...0.3.0
