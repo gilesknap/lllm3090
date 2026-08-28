@@ -12,13 +12,20 @@ lllm3090 <command> [options]
 | `start <name> [--ctx N] [--parallel N]` | Stop any running engine and start this model |
 | `stop` | Terminate the engine and wait for the VRAM to be released |
 | `bench <name>` | Benchmark a model and print a profile block to contribute |
+| `sweep [--gpu ID] [--limit N] [--yaml] [--skipped]` | Survey published GGUF models and price them against a card |
 | `status` | Whether the engine is running, on what, and whether it answers yet |
 | `panel [--port N]` | Run the control panel in the foreground |
 | `tui [--url U]` | The panel drawn in the terminal, for a console with no browser |
 | `claude [args…]` | Launch Claude Code against the local engine |
 | `claude --print-env` | Print that environment instead of launching it |
 
-See [](../how-to/context-and-slots.md) for choosing between them.
+See [](../how-to/context-and-slots.md) for choosing between them, and
+[](../how-to/find-models.md) for widening the list.
+
+`sweep` downloads no weights: it derives each candidate's KV cost from that
+model's own `config.json` and runs it through the same arithmetic the panel
+uses. `--gpu` prices against any profile in `profiles.yaml` instead of the
+detected card. It never produces a speed — `bench` is what does that.
 
 `start` computes the KV pool from what fits, splits it into `--parallel` slots
 (default 2, so an agent's subagents have somewhere to go), and gives each slot

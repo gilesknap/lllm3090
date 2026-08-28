@@ -15,8 +15,26 @@
 #                      here; otherwise it is derived from memory bandwidth over
 #                      bytes-read-per-token and should be treated as ±30%.
 #
+#   min_compute_capability
+#                      optional, and rare. The oldest GPU architecture that can
+#                      run the entry at all -- for a quantisation whose kernels
+#                      only exist on newer silicon. It is the ONLY hardware
+#                      requirement typed by hand here: everything about memory
+#                      is arithmetic (catalog.min_vram_mib) and recomputes for
+#                      whatever card is present, while a kernel that does not
+#                      exist cannot be derived from a file size.
+#
 # The panel computes achievable context from size_gb and kv_kib_per_token at
 # run time, so it stays honest if you run headless (~2.4 GiB more to spend).
+#
+# For the same reason, DO NOT quote a context figure in `notes`. Notes are
+# judgement -- why someone would pick this entry over its neighbour -- and the
+# numbers beside them are computed per card. Two entries here carried absolute
+# figures that were correct when written and wrong by the time the driver
+# reserve and the KV overhead factor landed; the row then contradicted itself.
+#
+# `lllm3090 sweep` produces new entries in this shape from a model's own
+# config.json, with everything derivable filled in and nothing else invented.
 
 models:
   - id: qwen3.8-27b
@@ -57,8 +75,11 @@ models:
       than its size suggests -- measured at 126 tok/s on a short prompt and
       112 at 40k, against the dense 27B's 35. Its hybrid attention also makes KV
       unusually cheap (20 KiB/token against the 27B's 64), which is what puts
-      the full 262k context in reach -- 212k per conversation with a slot spare
-      for a subagent. Cold prefill at 40k is 21 s, warm 0.1 s. The default
+      the full 262k context in reach -- and on a text console it reaches the
+      RoPE ceiling itself, with a slot spare for a subagent. The context
+      figures beside this entry are computed for the card you are on; they are
+      not quoted here, because a note cannot be recomputed and drifts the first
+      time a reserve moves. Cold prefill at 40k is 21 s, warm 0.1 s. The default
       recommendation: the fastest model that also reaches a full 262k context.
       gpt-oss-20b decodes faster at 160 tok/s, in 128k of room -- take that one
       if the work fits and speed matters more than the window.
@@ -78,9 +99,13 @@ models:
     notes: >-
       The same model at a higher bit-rate -- K-quants rather than I-quants, about
       0.4 bits per weight more. Decodes the same (124 tok/s measured, against the
-      IQ4_XS build's 126) but leaves far less room for KV: 61k per conversation
-      against 212k. You are trading context for fidelity at no speed cost. Take
-      it only if you have measured that IQ4_XS is not good enough for your work.
+      IQ4_XS build's 126) but the extra 3 GB of weights comes straight out of the
+      cache, and on a 24 GB card with a desktop running that is enough to drop
+      it under the window an agent harness needs -- the panel marks it tight and
+      says what card would clear it. Headless it is comfortable, and on a 32 GB
+      card it is comfortable either way. You are trading context for fidelity at
+      no speed cost: take it only if you have measured that IQ4_XS is not good
+      enough for your work.
 
   - id: gpt-oss-20b
     name: gpt-oss-20b
@@ -98,9 +123,9 @@ models:
       Native MXFP4 -- this is the format the model was released in, not a
       re-quantisation, so nothing is lost in conversion. The fastest model here
       by a clear margin -- 160 tok/s measured on a short prompt, 113 at 40k --
-      and small enough to leave most of the card free, so it gets four slots at
-      its full 128k window. Cold prefill at 40k is 17 s, warm 0.1 s. Exposes a
-      reasoning_effort control that changes output length rather than speed,
+      and small enough to leave most of the card free, so it reaches its full
+      window with slots to spare. Cold prefill at 40k is 17 s, warm 0.1 s.
+      Exposes a reasoning_effort control that changes output length rather than speed,
       which is the useful knob for agent work.
 
   - id: qwen3-8b
@@ -142,8 +167,9 @@ models:
       The first entry here that is not a Qwen or a gpt-oss, and the closest
       thing to a peer for the recommendation: sparse, 4B active, and KV of 20
       KiB/token -- the same figure as Qwen3.6-35B-A3B. Measured at 128 tok/s,
-      which is the 35B-A3B's 126 with vision on top, for 76k less context:
-      141k per conversation against 212k. Take this one when the work involves
+      which is the 35B-A3B's 126 with vision on top, and a shorter window in
+      exchange: the projector's weights and its own compute workspace both come
+      out of the cache. Take this one when the work involves
       images, the 35B-A3B when it needs the longest window. Watch the KV
       derivation if you change the quant: Gemma keeps a separate geometry for
       its 5 full-attention layers (2 global KV heads, 512 head dim), and the
@@ -165,12 +191,12 @@ models:
     verified: true
     tags: [general, long-context, parallel, vision]
     notes: >-
-      The cheapest KV cache in the catalogue at 13 KiB/token, which is what
-      lets it hold **three** concurrent conversations at its full 131k RoPE
-      ceiling -- more slots at full depth than anything else here. The trade is
-      that it is **dense**: all 30B parameters are read per token, and it
-      measures 44 tok/s against the sparse entries' 126-160. The narrowest
-      entry in the catalogue: take it only when you genuinely want three long
+      The cheapest KV cache in the catalogue at 13 KiB/token, which buys more
+      concurrent conversations at full depth than anything else here -- how
+      many depends on the card, and the panel is what says. The trade is that
+      it is **dense**: all 30B parameters are read per token, and it measures
+      44 tok/s against the sparse entries' 126-160. The narrowest entry in the
+      catalogue: take it only when you genuinely want several long
       conversations at once and can wait for each. For one conversation,
       Gemma-4-26B-A4B is three times the speed with more context.
 
@@ -192,7 +218,7 @@ models:
       Quantisation-aware trained, so 4 bits is what it was trained for rather
       than something done to it afterwards -- the reason to prefer this over a
       post-quantised 12B. At 6.7 GB it leaves most of the card free and still
-      reaches the full 262k ceiling on four slots. A better smoke test than
-      Qwen3-8B, whose 32k window cannot hold an agent harness's system prompt,
+      reaches its full 262k ceiling with slots to spare. A better smoke test
+      than Qwen3-8B, whose 32k window cannot hold an agent harness's system prompt,
       and small enough to sit alongside something else. 84 tok/s measured.
 

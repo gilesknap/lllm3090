@@ -55,6 +55,16 @@ class Model:
     #: counted against the budget -- otherwise the panel promises context that
     #: the projector has already spent.
     mmproj_gb: float = 0.0
+    #: The oldest GPU generation that can run this entry at all, as an
+    #: ``nvidia-smi`` compute capability -- ``"12.0"`` for a model whose
+    #: quantisation only has Blackwell kernels, say.
+    #:
+    #: Deliberately the *only* hardware requirement that is typed by hand.
+    #: Everything about memory is arithmetic (:func:`min_vram_mib`) and travels
+    #: to any card on its own; a kernel that does not exist for an older
+    #: architecture cannot be derived from a file size, so it has to be
+    #: recorded. Left unset means "no known floor", which is the common case.
+    min_compute_capability: str | None = None
     verified: bool = False
     notes: str = ""
     tags: list[str] = field(default_factory=list)
@@ -66,6 +76,18 @@ class Model:
     @property
     def vision(self) -> bool:
         return self.mmproj is not None
+
+    @property
+    def min_vram_gb(self) -> float | None:
+        """Smallest card that runs this model at a window an agent can use.
+
+        Computed with a desktop session held back, because that is the machine
+        most people are actually sitting at, and over-promising is the failure
+        this arithmetic exists to prevent. ``None`` means no card is enough --
+        see :func:`min_vram_mib`.
+        """
+        need = min_vram_mib(self)
+        return None if need is None else round(need / 1024, 1)
 
 
 @dataclass(frozen=True)
@@ -100,6 +122,17 @@ class Plan:
     #: nothing at all. ``default`` is a GGUF the catalogue has never seen,
     #: whose KV cost is unknown, so its window is a fixed conservative figure.
     capped_by: str  # "vram" | "rope" | "default"
+
+    @property
+    def agent_ready(self) -> bool:
+        """Whether one conversation clears the harness's own system prompt.
+
+        Fitting and being usable are different questions, and the gap between
+        them is wide: a model can load with room to spare and still leave less
+        context than Claude Code spends before your first word. See
+        ``config.AGENT_PROMPT_FLOOR``.
+        """
+        return self.per_session > config.AGENT_PROMPT_FLOOR
 
     @property
     def summary(self) -> str:
@@ -183,6 +216,75 @@ def plan(
     # Round the per-session window down to whole pages so the pool divides evenly.
     share = max(1024, (share // 1024) * 1024)
     return Plan(share * parallel, parallel, share, "vram")
+
+
+def _pages_up(tokens: int) -> int:
+    """``tokens`` rounded up to whole 1024-token cache pages."""
+    return int(math.ceil(tokens / 1024) * 1024)
+
+
+def min_vram_mib(
+    model: Model, desktop: bool = True, parallel: int | None = None
+) -> float | None:
+    """The smallest card that leaves this model a window an agent can use.
+
+    The inverse of :func:`fit`. Where ``fit`` asks what context a given card
+    leaves, this asks what card the agent floor demands -- the question someone
+    shopping for hardware, or reading this catalogue on a card it was not
+    curated for, is actually asking.
+
+    It is derived rather than declared, and that is deliberate. A hand-typed
+    figure in ``models.yaml`` would be a second source of truth beside this
+    arithmetic, free to disagree with it and silently invalidated by every
+    change to a reserve -- ``VISION_WORKSPACE_RESERVE_MIB`` was introduced
+    after the catalogue shipped and moved the answer for every vision entry.
+
+    ``None`` means no amount of memory is enough: the model's RoPE ceiling is
+    already at or below the floor, so its window is bounded by the architecture
+    and a bigger card cannot move it. ``Qwen3-8B`` is that case, at 32k.
+    """
+    if model.max_ctx <= config.AGENT_PROMPT_FLOOR:
+        return None
+    parallel = parallel or config.DEFAULT_PARALLEL
+    # The smallest window that clears the floor, page-aligned the way plan()
+    # hands one out, and never more than the architecture can address.
+    window = min(model.max_ctx, _pages_up(config.AGENT_PROMPT_FLOOR + 1))
+    # Inverting fit(): a pool of this many tokens costs this much cache at q8,
+    # with the engine's own per-cell overhead restored on top.
+    per_token_kib = (model.kv_kib_per_token / 2) * config.KV_OVERHEAD_FACTOR
+    need = model.weights_mib + window * parallel * per_token_kib / 1024
+    need += config.DRIVER_RESERVE_MIB + config.WORKSPACE_RESERVE_MIB
+    if model.vision:
+        need += config.VISION_WORKSPACE_RESERVE_MIB
+    if desktop:
+        need += config.DESKTOP_RESERVE_MIB
+    return float(math.ceil(need))
+
+
+def _capability(text: str) -> tuple[int, ...] | None:
+    """A compute capability as comparable numbers, or None if it is not one."""
+    try:
+        return tuple(int(part) for part in text.split("."))
+    except ValueError:
+        return None
+
+
+def capability_ok(model: Model, profile: hardware.Profile) -> bool:
+    """Whether this card's architecture is new enough to run this model at all.
+
+    Unknown in either direction is no objection. A missing
+    ``min_compute_capability`` is the common case and means nothing is known to
+    be required; a card that will not report its own capability cannot be
+    *proven* inadequate, and hiding half the catalogue on that basis is a worse
+    answer than letting a download fail.
+    """
+    if model.min_compute_capability is None:
+        return True
+    want = _capability(model.min_compute_capability)
+    have = _capability(profile.compute_capability)
+    if want is None or have is None:
+        return True
+    return have >= want
 
 
 #: Per-slot window for a GGUF that is not in the catalogue.
@@ -318,6 +420,68 @@ def free_vram_warning(model: Model | None, ctx: int) -> str | None:
     )
 
 
+#: What a catalogue entry is, on the card in this machine.
+#:
+#: Three states rather than two, because "fits" and "usable" are not the same
+#: claim. ``Ornith-1.5-35B-A3B`` loads on a 24 GB card and leaves 5k of
+#: context; ``DeepSeek-R1-Distill-Qwen-32B`` loads and leaves 8k. Both are
+#: widely recommended for this card, and neither can run an agent harness whose
+#: system prompt alone is 40k. A UI with one "fits" flag has to show them as
+#: successes.
+STATUS_OK = "ok"
+STATUS_TIGHT = "tight"
+STATUS_TOO_BIG = "too-big"
+STATUS_CAPABILITY = "capability"
+
+
+def _advise_gb(need: float) -> int:
+    """A required card size, rounded the only safe way: up.
+
+    ``min_vram_gb`` is a threshold, not an estimate. Rounding 24.4 to nearest
+    advises a 24 GB card for a model that needs more than 24 GB, which is the
+    one direction this arithmetic must never err in -- it is advice to go and
+    buy the wrong hardware.
+    """
+    return math.ceil(need)
+
+
+def status(
+    model: Model, plan_: Plan, fit_: Fit, profile: hardware.Profile
+) -> tuple[str, str]:
+    """This model's state on this card, and the phrase every front end shows.
+
+    The wording lives here rather than in the panel, the terminal UI and the
+    CLI separately, because all three answer the same question about the same
+    card and disagreeing about it is how a promise gets made in one place and
+    withdrawn in another.
+    """
+    if not capability_ok(model, profile):
+        return STATUS_CAPABILITY, (
+            f"needs compute capability {model.min_compute_capability}; "
+            f"this card is {profile.compute_capability}"
+        )
+    if not fit_.fits:
+        need = model.min_vram_gb
+        room = f"needs about {_advise_gb(need)} GB" if need else "does not fit"
+        return STATUS_TOO_BIG, f"too big for this card -- {room}"
+    if not plan_.agent_ready:
+        short = (
+            f"fits, but leaves {plan_.per_session // 1024}k per conversation -- "
+            f"under the {config.AGENT_PROMPT_FLOOR // 1000}k an agent harness "
+            "spends before your first word"
+        )
+        need = model.min_vram_gb
+        if need is None:
+            # Bounded by RoPE, not by memory. Saying "needs a bigger card"
+            # here would send someone shopping for one that does not exist.
+            return STATUS_TIGHT, (
+                f"{short}. Its {model.max_ctx // 1024}k ceiling is the "
+                "architecture's, so no card lifts it"
+            )
+        return STATUS_TIGHT, f"{short}. About {_advise_gb(need)} GB would clear it"
+    return STATUS_OK, ""
+
+
 def catalog_for_panel(desktop: bool | None = None) -> list[dict[str, Any]]:
     """Catalogue entries decorated with fit, plan and installed-state, for the UI.
 
@@ -334,8 +498,18 @@ def catalog_for_panel(desktop: bool | None = None) -> list[dict[str, Any]]:
     for m in load_catalog():
         f = fit(m, desktop, profile)
         p = plan(m, desktop=desktop, profile=profile)
+        state, why = status(m, p, f, profile)
         rows.append(
             {
+                "status": state,
+                "status_note": why,
+                "agent_ready": p.agent_ready,
+                "capability_ok": capability_ok(m, profile),
+                "min_compute_capability": m.min_compute_capability,
+                # What card this would need, independent of the one detected --
+                # so a reader on a 16 GB card learns what would change it.
+                "min_vram_gb": m.min_vram_gb,
+                "card_gb": round(profile.vram_mib / 1024),
                 "id": m.id,
                 "name": m.name,
                 "repo": m.repo,

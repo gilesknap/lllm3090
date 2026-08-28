@@ -139,13 +139,26 @@ def models() -> None:
                 "No desktop session: the full card is available for context."
             )
     typer.echo("")
-    header = f"{'MODEL':<24}{'SIZE':>8}{'KIND':>10}{'CONTEXT':>12}  {'STATE':<12}SPEED"
+    header = f"{'MODEL':<24}{'SIZE':>8}{'KIND':>10}{'CONTEXT':>12}  {'STATE':<16}SPEED"
     typer.echo(header)
-    for row in catalog.catalog_for_panel():
-        state = (
-            "installed" if row["installed"]
-            else ("fits" if row["fits"] else "too big")
-        )
+    rows = catalog.catalog_for_panel()
+    cautions: list[str] = []
+    for row in rows:
+        # Two independent facts: whether it is on the disk, and what the card
+        # makes of it. Collapsing them loses one, and it was the caution that
+        # got lost -- an installed model reading "installed" while leaving less
+        # context than an agent's own prompt is the case this column exists for.
+        verdict = {
+            catalog.STATUS_TOO_BIG: "too big",
+            catalog.STATUS_TIGHT: "tight",
+            catalog.STATUS_CAPABILITY: "old GPU",
+        }.get(row["status"], "")
+        if row["installed"]:
+            state = f"{verdict}, on disk" if verdict else "installed"
+        else:
+            state = verdict or "fits"
+        if row["status_note"]:
+            cautions.append(f"  {row['name']}: {row['status_note']}")
         speed = f"~{row['expected_tok_s']} tok/s" if row["expected_tok_s"] else "-"
         if row["verified"]:
             speed += " (measured)" if row["speed_applies"] else " (other card)"
@@ -155,7 +168,98 @@ def models() -> None:
         kind = row["kind"] + ("+vis" if row["vision"] else "")
         typer.echo(
             f"{row['name']:<24}{row['gb']:>7.1f}G{kind:>10}{ctx:>12}  "
-            f"{state:<12}{speed}"
+            f"{state:<16}{speed}"
+        )
+    if cautions:
+        typer.echo("")
+        for line in cautions:
+            typer.echo(line)
+
+
+def _profile_named(gpu: str | None) -> hardware.Profile:
+    """The profile to price against: a named card, or the one in this machine."""
+    if gpu is None:
+        return hardware.detect()
+    profiles = hardware.load_profiles()
+    match = next((p for p in profiles if p.id == gpu), None)
+    if match is None:
+        ids = ", ".join(p.id for p in profiles)
+        typer.echo(f"Unknown GPU {gpu!r}. Known profiles: {ids}")
+        raise typer.Exit(1)
+    return match
+
+
+@app.command()
+def sweep(
+    limit: int = typer.Option(
+        100, help="How many of the most-downloaded GGUF repos to price."
+    ),
+    gpu: str | None = typer.Option(
+        None, help="Price against a named profile instead of the detected card."
+    ),
+    show_yaml: bool = typer.Option(
+        False, "--yaml", help="Emit catalogue entries for the survivors."
+    ),
+    show_skipped: bool = typer.Option(
+        False, "--skipped", help="List repos that could not be priced, and why."
+    ),
+) -> None:
+    """Survey published GGUF models and price them against this card.
+
+    Downloads no weights: each candidate costs one config.json, from which the
+    KV cost per token is derived and then run through the same arithmetic the
+    panel uses. What comes out is a shortlist worth spending disk on, and --
+    just as usefully -- a list of models that fit the card and still cannot
+    hold an agent's system prompt.
+    """
+    from . import sweep as sweep_mod
+
+    profile = _profile_named(gpu)
+    desktop = hardware.graphical()
+    typer.echo(
+        f"Pricing against {profile.name} ({profile.vram_mib // 1024} GB)"
+        + ("" if gpu is None else " [--gpu override]")
+        + (", desktop session held back" if desktop else ", headless")
+    )
+    typer.echo(f"Surveying the top {limit} GGUF repositories...\n")
+
+    keep, reject, skipped = sweep_mod.survey(limit, profile, desktop)
+
+    typer.echo(f"{'CANDIDATE':<34}{'SIZE':>8}{'KIND':>7}{'KV':>7}  CONTEXT")
+    for r in keep:
+        c = r.candidate
+        typer.echo(
+            f"{c.name[:33]:<34}{c.size_gb:>7.1f}G{c.kind:>7}"
+            f"{c.kv_kib_per_token:>6g}K  {r.plan.summary}"
+        )
+    if not keep:
+        typer.echo("  (nothing new clears the bar)")
+
+    if reject:
+        typer.echo(f"\nPriced and rejected ({len(reject)}):")
+        # Only said when something was rejected for that reason. A rejection
+        # list that is all "too big" does not need the agent floor explained,
+        # and saying "these fit the card" over an entry that does not fit is
+        # the kind of small untruth that makes the rest look careless.
+        if any(r.status == catalog.STATUS_TIGHT for r in reject):
+            typer.echo(f"  {sweep_mod.agent_floor_note()}")
+        typer.echo("")
+        for r in reject:
+            typer.echo(f"  {r.candidate.name[:33]:<34}{r.note}")
+
+    if show_skipped and skipped:
+        typer.echo(f"\nNot priced ({len(skipped)}):")
+        for repo, why in skipped:
+            typer.echo(f"  {repo[:44]:<46}{why}")
+    elif skipped:
+        typer.echo(f"\n{len(skipped)} repos could not be priced (--skipped to see why)")
+
+    if show_yaml and keep:
+        typer.echo("\n--- paste into src/lllm3090/data/models.yaml ---\n")
+        typer.echo(sweep_mod.to_yaml(keep, profile))
+        typer.echo(
+            "\n--- speeds are deliberately absent: run 'lllm3090 bench <model>'\n"
+            "--- after downloading, then set expected_tok_s and verified: true"
         )
 
 
