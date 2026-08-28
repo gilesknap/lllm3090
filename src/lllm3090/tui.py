@@ -367,6 +367,10 @@ def model_rows(snap: dict[str, Any]) -> list[dict[str, Any]]:
                 "params": "",
                 "notes": "",
                 "fits": m.get("fits", True),
+                # Nothing is known about an uncatalogued GGUF's cache cost, so
+                # there is no arithmetic behind a caution and none is shown.
+                "status": catalog.STATUS_OK,
+                "status_note": "",
                 "max_ctx": m.get("max_ctx", catalog.UNKNOWN_MODEL_CTX),
                 "parallel": m.get("parallel", config.DEFAULT_PARALLEL),
                 "expected_tok_s": None,
@@ -419,8 +423,14 @@ def _row_lines(
             right, style = "running", style or "ok"
         elif c["on_disk"]:
             right = "on disk"
+        elif c.get("status") == catalog.STATUS_CAPABILITY:
+            right, style = "old GPU", style or "dim"
         elif not c["fits"]:
             right, style = "too big", style or "dim"
+        elif c.get("status") == catalog.STATUS_TIGHT:
+            # Startable and fine for chat, so not dimmed like a refusal -- but
+            # it cannot hold an agent's system prompt and the list must say so.
+            right, style = "tight", style or "warn"
         else:
             right = ""
         # The speed goes in whole or not at all. Half of "~115 tok/s (other
@@ -580,6 +590,8 @@ def handle_key(
             # answers such a download with a 400, and 40 GB is an expensive way
             # to find that out.
             ui.message = f"{row['name']} does not fit this card"
+        elif row.get("status") == catalog.STATUS_CAPABILITY:
+            ui.message = row.get("status_note") or f"{row['name']} needs a newer GPU"
         elif snap.get("source") == "local":
             ui.message = "downloads need the panel -- press P to start it"
         else:

@@ -9,6 +9,7 @@ API reference
    lllm3090.config
    lllm3090.hardware
    lllm3090.catalog
+   lllm3090.sweep
    lllm3090.engine
    lllm3090.downloads
    lllm3090.preflight

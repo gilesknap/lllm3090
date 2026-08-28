@@ -10,6 +10,7 @@ how-to/headless
 how-to/terminal-ui
 how-to/remote-access
 how-to/own-gguf
+how-to/find-models
 how-to/troubleshooting
 how-to/release
 ```

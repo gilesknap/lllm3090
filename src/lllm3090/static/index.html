@@ -58,7 +58,12 @@
     margin:.75rem .3rem .15rem}
   .r{border-bottom:1px solid var(--rule)}
   .r.no{opacity:.5}
+  /* Fits, but leaves less context than an agent's own system prompt. Dimmed
+     less than "too big", because it is startable and fine for chat -- the row
+     is a caution, not a refusal. */
+  .r.tight{opacity:.72}
   .r.on{background:var(--okbg)}
+  .why{color:var(--warn);font-size:.74rem;margin:.1rem 0 .5rem 1.3rem;line-height:1.5}
   .rhead{padding:.55rem .3rem;cursor:pointer}
   .rhead:hover{background:var(--bg)}
   .caret{flex:0 0 .7rem;color:var(--ink2);font-size:.7rem}
@@ -177,6 +182,9 @@ function mergedRows(s){
     rows.push({
       id: null, name: m.name, gb: m.gb, kind: m.kind || 'gguf', vision: false,
       params: '', notes: '', fits: m.fits !== false,
+      // Nothing is known about an uncatalogued GGUF's cache cost, so there is
+      // no arithmetic behind a caution and none is shown.
+      status: 'ok', status_note: '', min_vram_gb: null,
       max_ctx: m.max_ctx, parallel: m.parallel,
       expected_tok_s: null, verified: false, speed_applies: true,
       installed: true, onDisk: true, running: m.name === served,
@@ -195,7 +203,11 @@ function actionHtml(c){
   if (c.running)  return `<button class="small" onclick="act(event,'/api/stop')">Stop</button>`;
   if (c.download) return `<button class="small" onclick="act(event,'/api/download/${key}/cancel')">Cancel</button>`;
   if (c.onDisk)   return `<button class="small primary" onclick="act(event,'/api/start?model=${encodeURIComponent(c.name)}')">Start</button>`;
+  if (c.status === 'capability') return `<span class="pill p-bad">needs newer GPU</span>`;
   if (!c.fits)    return `<span class="pill p-bad">too big</span>`;
+  // A tight model is still downloadable and still fine for chat. Withholding
+  // the button would be a stronger claim than the arithmetic supports.
+  if (c.status === 'tight') return `<button class="small" onclick="act(event,'/api/download/${key}')">Get anyway</button>`;
   return `<button class="small" onclick="act(event,'/api/download/${key}')">Get</button>`;
 }
 
@@ -203,7 +215,7 @@ function rowHtml(c, groupLabel){
   const open = expandedId === rowKey(c);
   const ctx = c.fits && c.max_ctx ? `${fmtCtx(c.max_ctx)} × ${c.parallel}` : '—';
   return `
-  <div class="r ${c.fits ? '' : 'no'} ${c.running ? 'on' : ''}">
+  <div class="r ${c.fits ? (c.status === 'tight' ? 'tight' : '') : 'no'} ${c.running ? 'on' : ''}">
     ${groupLabel ? `<p class="group">${groupLabel}</p>` : ''}
     <div class="rhead" onclick="toggle('${esc(rowKey(c))}')">
       <span class="caret">${open ? '▾' : '▸'}</span>
@@ -218,6 +230,7 @@ function rowHtml(c, groupLabel){
       <span class="c-speed">${esc(speedLabel(c))}</span>
       <span class="c-act">${actionHtml(c)}</span>
     </div>
+    ${c.status_note ? `<p class="why">${esc(c.status_note)}</p>` : ''}
     ${c.download ? `<div class="prog">
       <div class="bar"><i id="pb-${esc(rowKey(c))}" style="width:0"></i></div>
       <span class="k" id="pt-${esc(rowKey(c))}"></span>
@@ -225,6 +238,8 @@ function rowHtml(c, groupLabel){
     ${c.failed ? `<p class="err" id="er-${esc(rowKey(c))}"></p>` : ''}
     ${open ? `<div class="more">
       <p>${esc(c.params)}</p><p>${esc(c.notes)}</p>
+      ${c.min_vram_gb ? `<p>Wants a card of about ${c.min_vram_gb} GB to reach a
+        window an agent can use. This one is ${c.card_gb} GB.</p>` : ''}
     </div>` : ''}
   </div>`;
 }

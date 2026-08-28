@@ -10,7 +10,35 @@ change is only visible in the source it does not need a line here.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- `lllm3090 sweep` — survey the published GGUF models and price them against
+  your card, without downloading any of them. Each candidate costs one
+  `config.json`, from which its KV cost per token is derived and run through
+  the same arithmetic the panel uses. `--yaml` emits catalogue entries ready to
+  paste; `--gpu <profile>` prices against a card you do not own.
+- A third state in every front end: **tight**. A model that fits the card and
+  still leaves less context than an agent harness spends on its own system
+  prompt is now shown as a caution rather than a success, with the size of card
+  that would clear it. Two catalogue entries turn out to be in that state on a
+  24 GB card with a desktop running, and were previously indistinguishable from
+  the ones that work.
+- `min_compute_capability`, an optional catalogue field for a model whose
+  kernels only exist on newer silicon. It is the only hardware requirement
+  typed by hand: the memory a model needs is computed from its own figures and
+  recomputes for whatever card is present.
+
+### Fixed
+
+- Three catalogue entries quoted context figures in their notes that were
+  correct when written and stale by the time the driver reserve and the KV
+  overhead factor landed — a row could say 34k in its context column and 61k in
+  its prose, with nothing to say which was current. The notes now carry
+  judgement and leave the numbers to the arithmetic, and a test keeps it that
+  way.
+- `lllm3090 models` showed an installed model as `installed` whatever the card
+  made of it, so a model that could not hold an agent's system prompt read as a
+  success. Disk state and card verdict are now both shown.
 
 ## [0.5.0] — 2026-08-26
 
