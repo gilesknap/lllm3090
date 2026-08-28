@@ -256,7 +256,7 @@ def sweep(
 
     if show_yaml and keep:
         typer.echo("\n--- paste into src/lllm3090/data/models.yaml ---\n")
-        typer.echo(sweep_mod.to_yaml(keep))
+        typer.echo(sweep_mod.to_yaml(keep, profile))
         typer.echo(
             "\n--- speeds are deliberately absent: run 'lllm3090 bench <model>'\n"
             "--- after downloading, then set expected_tok_s and verified: true"

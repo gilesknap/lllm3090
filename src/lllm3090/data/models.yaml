@@ -123,9 +123,9 @@ models:
       Native MXFP4 -- this is the format the model was released in, not a
       re-quantisation, so nothing is lost in conversion. The fastest model here
       by a clear margin -- 160 tok/s measured on a short prompt, 113 at 40k --
-      and small enough to leave most of the card free, so it gets four slots at
-      its full 128k window. Cold prefill at 40k is 17 s, warm 0.1 s. Exposes a
-      reasoning_effort control that changes output length rather than speed,
+      and small enough to leave most of the card free, so it reaches its full
+      window with slots to spare. Cold prefill at 40k is 17 s, warm 0.1 s.
+      Exposes a reasoning_effort control that changes output length rather than speed,
       which is the useful knob for agent work.
 
   - id: qwen3-8b
@@ -191,12 +191,12 @@ models:
     verified: true
     tags: [general, long-context, parallel, vision]
     notes: >-
-      The cheapest KV cache in the catalogue at 13 KiB/token, which is what
-      lets it hold **three** concurrent conversations at its full 131k RoPE
-      ceiling -- more slots at full depth than anything else here. The trade is
-      that it is **dense**: all 30B parameters are read per token, and it
-      measures 44 tok/s against the sparse entries' 126-160. The narrowest
-      entry in the catalogue: take it only when you genuinely want three long
+      The cheapest KV cache in the catalogue at 13 KiB/token, which buys more
+      concurrent conversations at full depth than anything else here -- how
+      many depends on the card, and the panel is what says. The trade is that
+      it is **dense**: all 30B parameters are read per token, and it measures
+      44 tok/s against the sparse entries' 126-160. The narrowest entry in the
+      catalogue: take it only when you genuinely want several long
       conversations at once and can wait for each. For one conversation,
       Gemma-4-26B-A4B is three times the speed with more context.
 
@@ -218,7 +218,7 @@ models:
       Quantisation-aware trained, so 4 bits is what it was trained for rather
       than something done to it afterwards -- the reason to prefer this over a
       post-quantised 12B. At 6.7 GB it leaves most of the card free and still
-      reaches the full 262k ceiling on four slots. A better smoke test than
-      Qwen3-8B, whose 32k window cannot hold an agent harness's system prompt,
+      reaches its full 262k ceiling with slots to spare. A better smoke test
+      than Qwen3-8B, whose 32k window cannot hold an agent harness's system prompt,
       and small enough to sit alongside something else. 84 tok/s measured.
 

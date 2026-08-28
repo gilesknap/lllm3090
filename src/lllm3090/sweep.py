@@ -249,7 +249,7 @@ def price(
 TODO_NOTE = "TODO: why would someone pick this over the entry above it?"
 
 
-def to_yaml(results: list[Priced]) -> str:
+def to_yaml(results: list[Priced], profile: hardware.Profile | None = None) -> str:
     """Catalogue entries for these candidates, ready to paste into models.yaml.
 
     Every field that is arithmetic is filled in. Every field that is judgement
@@ -257,7 +257,13 @@ def to_yaml(results: list[Priced]) -> str:
     entirely. A block from here parses back into :class:`lllm3090.catalog.Model`
     unchanged, which ``tests/test_sweep.py`` asserts, so a paste that loads is
     a paste that the panel can already price.
+
+    ``profile`` must be the one the results were priced against. The plan in
+    each note is a claim about a specific card, so naming a different one --
+    the detected card, when ``--gpu`` priced for another -- would attach a
+    correct figure to the wrong hardware, which is worse than omitting it.
     """
+    card = (profile or hardware.detect()).name
     out: list[str] = []
     for r in results:
         c = r.candidate
@@ -278,7 +284,7 @@ def to_yaml(results: list[Priced]) -> str:
     notes: >-
       {TODO_NOTE}
       Swept, not measured: {r.plan.summary} on
-      {hardware.detect().name}. Run 'lllm3090 bench' before setting
+      {card}. Run 'lllm3090 bench' before setting
       expected_tok_s or verified.""")
     return "\n".join(out).lstrip("\n")
 

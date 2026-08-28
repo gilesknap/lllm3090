@@ -434,6 +434,17 @@ STATUS_TOO_BIG = "too-big"
 STATUS_CAPABILITY = "capability"
 
 
+def _advise_gb(need: float) -> int:
+    """A required card size, rounded the only safe way: up.
+
+    ``min_vram_gb`` is a threshold, not an estimate. Rounding 24.4 to nearest
+    advises a 24 GB card for a model that needs more than 24 GB, which is the
+    one direction this arithmetic must never err in -- it is advice to go and
+    buy the wrong hardware.
+    """
+    return math.ceil(need)
+
+
 def status(
     model: Model, plan_: Plan, fit_: Fit, profile: hardware.Profile
 ) -> tuple[str, str]:
@@ -451,7 +462,7 @@ def status(
         )
     if not fit_.fits:
         need = model.min_vram_gb
-        room = f"needs about {need:.0f} GB" if need else "does not fit"
+        room = f"needs about {_advise_gb(need)} GB" if need else "does not fit"
         return STATUS_TOO_BIG, f"too big for this card -- {room}"
     if not plan_.agent_ready:
         short = (
@@ -467,7 +478,7 @@ def status(
                 f"{short}. Its {model.max_ctx // 1024}k ceiling is the "
                 "architecture's, so no card lifts it"
             )
-        return STATUS_TIGHT, f"{short}. About {need:.0f} GB would clear it"
+        return STATUS_TIGHT, f"{short}. About {_advise_gb(need)} GB would clear it"
     return STATUS_OK, ""
 
 

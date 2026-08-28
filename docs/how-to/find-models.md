@@ -88,10 +88,11 @@ Run with `--skipped` to see what could not be priced:
 lllm3090 sweep --skipped
 ```
 
-A repo is skipped when its KV cost cannot be derived — no `config.json` and no
-`base_model` to borrow one from, a multi-head latent attention model whose
-cache layout depends on the engine build rather than the config, no ~4-bit
-single-file quant.
+A repo is skipped when its KV cost cannot be derived: no `config.json` in the
+repo **and** no `base_model` tag to borrow one from (a GGUF conversion often
+keeps no config of its own, so the Hub's record of what it was converted from
+is followed), a multi-head latent attention model whose cache layout depends on
+the engine build rather than the config, or no ~4-bit single-file quant.
 
 Skipping is deliberate, and it is the safe direction. A wrong KV figure does
 not fail loudly: it produces a plan the card cannot honour, an engine that

@@ -421,8 +421,11 @@ def _row_lines(
             right, style = "failed", style or "bad"
         elif c["running"]:
             right, style = "running", style or "ok"
-        elif c["on_disk"]:
-            right = "on disk"
+        # The card's verdict outranks "on disk", which would otherwise hide it:
+        # being downloaded says nothing about whether this card can use it, and
+        # on a box where everything is downloaded that branch swallowed every
+        # caution. Nothing is lost by preferring the verdict -- the row's `mark`
+        # already carries disk state.
         elif c.get("status") == catalog.STATUS_CAPABILITY:
             right, style = "old GPU", style or "dim"
         elif not c["fits"]:
@@ -431,6 +434,8 @@ def _row_lines(
             # Startable and fine for chat, so not dimmed like a refusal -- but
             # it cannot hold an agent's system prompt and the list must say so.
             right, style = "tight", style or "warn"
+        elif c["on_disk"]:
+            right = "on disk"
         else:
             right = ""
         # The speed goes in whole or not at all. Half of "~115 tok/s (other

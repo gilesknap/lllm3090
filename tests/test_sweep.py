@@ -262,12 +262,56 @@ def test_notes_do_not_quote_a_context_figure():
     its context column and another in its notes, with nothing to say which was
     current. A note cannot be recomputed, so it must not carry a number that
     needs recomputing.
+
+    Slot counts are the same claim wearing different clothes -- "four slots at
+    its full 128k window" is as card-dependent as a window is, and ``plan()``
+    hands out a different number on a 16 GB card than on a 96 GB one. The first
+    version of this guard checked only windows and let three of those through.
     """
     import re
 
-    pattern = re.compile(r"\b\d{2,3}k\s+(per conversation|against)", re.IGNORECASE)
+    banned = (
+        # A window: "212k per conversation", "61k against 212k".
+        r"\b\d{2,3}k\s+(per conversation|against)",
+        # A slot count, in digits or words: "four slots", "three concurrent
+        # conversations", "two slots at its full window".
+        (
+            r"\b(\d+|one|two|three|four|five|six)\s+"
+            r"(slots?|concurrent\s+conversations?)\b"
+        ),
+    )
     for m in catalog.load_catalog():
-        assert not pattern.search(m.notes), (
-            f"{m.name}: notes quote a context figure that the panel computes "
-            f"per card and this note cannot follow"
-        )
+        for pattern in banned:
+            assert not re.search(pattern, m.notes, re.IGNORECASE), (
+                f"{m.name}: notes assert a figure the panel computes per card "
+                f"and this note cannot follow -- matched /{pattern}/"
+            )
+
+
+def test_the_advised_card_size_rounds_up():
+    """A threshold rounded to nearest is advice to buy the wrong card.
+
+    ``min_vram_gb`` is the smallest card that works, not an estimate of one. A
+    requirement of 24.4 GB rendered as "about 24 GB" sends someone to a 24 GB
+    card that cannot run it -- and unlike every other error here, that one
+    costs money rather than a download.
+    """
+    assert catalog._advise_gb(24.4) == 25
+    assert catalog._advise_gb(24.0) == 24
+    assert catalog._advise_gb(23.1) == 24
+
+
+def test_the_emitted_note_names_the_card_it_was_priced_against():
+    """With --gpu, the plan is a claim about the overridden card, not this one.
+
+    Attaching a correct figure to the wrong hardware is worse than omitting it:
+    the reader has no way to see that the two halves of the sentence disagree.
+    """
+    five_thousand_ninety = next(
+        p for p in hardware.load_profiles() if p.id == "rtx-5090"
+    )
+    text = sweep.to_yaml(
+        [sweep.price(_candidate(), five_thousand_ninety)], five_thousand_ninety
+    )
+    assert "RTX 5090" in text
+    assert "RTX 3090" not in text
