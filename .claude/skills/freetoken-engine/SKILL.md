@@ -1,6 +1,6 @@
 ---
 name: freetoken-engine
-description: FreeToken, the MoE expert-offload engine — what it buys over llama.cpp, the version pin chain its install depends on, and every failure mode hit while running it. Reference material for adding it to lllm3090 as a second engine (phase 2); not currently installed. Use when working on FreeToken integration, when an offloaded-MoE model will not load, when deciding whether a model needs offload at all, or when asking whether a given checkpoint could be reached with more host RAM — the ceiling is RAM, not VRAM, and this box caps at 128 GB.
+description: FreeToken, the MoE expert-offload engine — what it buys over llama.cpp, the version pin chain its install depends on, and every failure mode hit while running it. Reference material for adding it to lllm3090 as a second engine (phase 2); not currently installed. Use when working on FreeToken integration, when an offloaded-MoE model will not load, when deciding whether a model needs offload at all, or when asking whether a given checkpoint is reachable on this box at all — for FreeToken the ceiling is host RAM rather than VRAM and this board caps at 128 GB, while a disk-streaming engine (Colibri) trades that ceiling for a free-disk one without removing the RAM floor, which is per-model and still 16-32 GB. Both routes and their measured costs are recorded here.
 ---
 
 # FreeToken (phase 2 — not currently installed)
@@ -50,13 +50,65 @@ a checkpoint that loads but leaves no room to think in. `Ornith-1.5-35B-A3B` at
 context, far under the 40k agent floor. Under FreeToken the experts leave VRAM
 and that space becomes the cache.
 
-**What is out of reach, and will stay out of reach.** DeepSeek-V4-Flash needs a
-147 GB expert pool. That does not fit in 30 GB, and it does not fit in 128 GB
-either, so maxing this board out does not reach it. Streaming the shortfall from
-NVMe is not a workaround: 3.46 GB fetched per token at ~7 GB/s is 0.5 s per
-token, about **2 tok/s**. It needs a 192 GB machine, where the pool sits inside
-the VRAM allocation and there is no offload at all — see
-`local-inference-hardware`. Do not re-derive this.
+**What is out of reach for FreeToken.** DeepSeek-V4-Flash needs a 147 GB expert
+pool. That does not fit in 30 GB, and it does not fit in 128 GB either, so
+maxing this board out does not reach it. For a RAM-offload engine it needs a
+192 GB **unified-memory** machine — a Gorgon-class box where ~160 GB is
+allocated as VRAM, so the pool sits inside that allocation and there is no
+offload at all. Not 192 GB of ordinary host RAM, which is a different and
+insufficient thing; see `local-inference-hardware`. That much is settled; do
+not re-derive it.
+
+**It is not out of reach absolutely, and that changed in 2026.** This paragraph
+used to say "will stay out of reach", which was reasoning about RAM stated as if
+it were about physics. [Colibri](https://github.com/JustVugg/colibri) (July
+2026, pure C) streams routed experts from **disk** rather than host RAM, so the
+binding constraint becomes free disk instead of DIMM slots.
+
+It does not remove the RAM floor, it lowers it: the dense parts — attention,
+shared experts, embeddings — stay resident, and each model has its own
+requirement. DeepSeek-V4-Flash wants ~167 GB of disk and 16–32 GB of RAM;
+GLM-5.2 (744B) ~372 GB and 24 GB; Kimi K3 ~1.6 TB and 32 GB+. So on ws03 as it
+stands — 30 GB of RAM, `/` a 4 TB NVMe with 3.2 TB free — the first two load
+and Kimi K3 is at or over the RAM line, not merely a question of disk.
+
+**The speed verdict stands, and is now measured rather than estimated.** The
+2 tok/s figure above assumed a 7 GB/s Gen4 NVMe. Measured on this box with
+`O_DIRECT`, 30 Aug 2026:
+
+| | Lexar NQ790 (`/`, NVMe Gen4) | Crucial MX500 (`/home`, **SATA**) |
+|---|---|---|
+| sequential | 4.4 GB/s | 0.53 GB/s |
+| random 64 KiB | 1.31 GB/s | 0.13 GB/s |
+| random 1 MiB | 5.15 GB/s | 0.37 GB/s |
+
+So the real disk is *below* what the estimate assumed, and Colibri's own figures
+land below it in turn. Its published decode rates, all for **GLM-5.2 int4** and
+none of them on hardware identical to this box:
+
+| host | tok/s |
+|---|---|
+| 25 GB laptop, cold cache | 0.05–0.1 |
+| 128 GB CPU desktop, warm | ~1.8 |
+| single RTX 5070 Ti | 1.07 |
+| 6 x RTX 5090, fully resident | 5.8–6.8 |
+
+The catalogue's 126 tok/s is a different measurement — `Qwen3.6-35B-A3B` IQ4_XS
+resident in VRAM on the 3090, short prompt — so treat the comparison as
+qualitative. It is a two-to-three-order-of-magnitude gap either way.
+
+**What that rules out, precisely.** Not context: these are frontier models with
+large windows, so the 40k agent floor is not the binding constraint and the
+`AGENT_PROMPT_FLOOR` reasoning does not transfer. It is rate alone. At ~0.3
+tok/s a 500-token agent turn takes about 28 minutes before prefill, so
+*interactive* agent use is not practical. Whether a harness would run at all is
+untested — Colibri documents a `coli serve` endpoint and tool-calling — so do
+not claim it fails, claim it is too slow to sit in front of.
+
+**So: a capability, not a usable one.** Reach for it only for a single
+overnight question where frontier quality beats latency, and only with the
+checkpoint on `/`. `~/models` was on the SATA drive until Aug 2026 and the gap
+is widest (14x) at exactly the large random reads expert streaming does.
 
 ## The version pin chain
 
