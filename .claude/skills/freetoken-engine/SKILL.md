@@ -1,6 +1,6 @@
 ---
 name: freetoken-engine
-description: FreeToken, the MoE expert-offload engine — what it buys over llama.cpp, the version pin chain its install depends on, and every failure mode hit while running it. Reference material for adding it to lllm3090 as a second engine (phase 2); not currently installed. Use when working on FreeToken integration, when an offloaded-MoE model will not load, when deciding whether a model needs offload at all, or when asking whether a given checkpoint could be reached with more host RAM — the ceiling is RAM, not VRAM, and this box caps at 128 GB.
+description: FreeToken, the MoE expert-offload engine — what it buys over llama.cpp, the version pin chain its install depends on, and every failure mode hit while running it. Reference material for adding it to lllm3090 as a second engine (phase 2); not currently installed. Use when working on FreeToken integration, when an offloaded-MoE model will not load, when deciding whether a model needs offload at all, or when asking whether a given checkpoint is reachable on this box at all — for FreeToken the ceiling is host RAM rather than VRAM and this board caps at 128 GB, but a disk-streaming engine (Colibri) moves that ceiling to free disk and puts 200-400 GB checkpoints in reach at a speed recorded here.
 ---
 
 # FreeToken (phase 2 — not currently installed)
@@ -50,13 +50,41 @@ a checkpoint that loads but leaves no room to think in. `Ornith-1.5-35B-A3B` at
 context, far under the 40k agent floor. Under FreeToken the experts leave VRAM
 and that space becomes the cache.
 
-**What is out of reach, and will stay out of reach.** DeepSeek-V4-Flash needs a
-147 GB expert pool. That does not fit in 30 GB, and it does not fit in 128 GB
-either, so maxing this board out does not reach it. Streaming the shortfall from
-NVMe is not a workaround: 3.46 GB fetched per token at ~7 GB/s is 0.5 s per
-token, about **2 tok/s**. It needs a 192 GB machine, where the pool sits inside
-the VRAM allocation and there is no offload at all — see
-`local-inference-hardware`. Do not re-derive this.
+**What is out of reach for FreeToken.** DeepSeek-V4-Flash needs a 147 GB expert
+pool. That does not fit in 30 GB, and it does not fit in 128 GB either, so
+maxing this board out does not reach it. For a RAM-offload engine it needs a
+192 GB machine, where the pool sits inside the VRAM allocation and there is no
+offload at all — see `local-inference-hardware`. That much is settled; do not
+re-derive it.
+
+**It is not out of reach absolutely, and that changed in 2026.** This paragraph
+used to say "will stay out of reach", which was reasoning about RAM stated as if
+it were about physics. [Colibri](https://github.com/JustVugg/colibri) (July
+2026, pure C) streams routed experts from **disk** rather than host RAM, so the
+ceiling becomes free disk space instead of DIMM slots. It lists DeepSeek-V4-Flash
+at ~167 GB of disk and 16–32 GB of RAM, and GLM-5.2 (744B) at ~372 GB and 24 GB.
+Both load on ws03 as it stands — `/` is a 4 TB NVMe with 3.2 TB free.
+
+**The speed verdict stands, and is now measured rather than estimated.** The
+2 tok/s figure above assumed a 7 GB/s Gen4 NVMe. Measured on this box with
+`O_DIRECT`, 30 Aug 2026:
+
+| | Lexar NQ790 (`/`, NVMe Gen4) | Crucial MX500 (`/home`, **SATA**) |
+|---|---|---|
+| sequential | 4.4 GB/s | 0.53 GB/s |
+| random 64 KiB | 1.31 GB/s | 0.13 GB/s |
+| random 1 MiB | 5.15 GB/s | 0.37 GB/s |
+
+So the real disk is *below* what the estimate assumed, and Colibri's own figures
+land below it in turn: 0.05–0.1 tok/s on a 25 GB laptop, ~1.8 tok/s on a 128 GB
+CPU desktop, 1.07 on a single RTX 5070 Ti. Against a resident 126 tok/s that is
+two to three orders of magnitude, and it cannot run an agent harness at all —
+40k tokens of system prompt arrive before the first word.
+
+**So: a capability, not a usable one.** Reach for it only for a single
+overnight question where frontier quality beats latency, and only with the
+checkpoint on `/`. `~/models` was on the SATA drive until Aug 2026 and the gap
+is widest (14x) at exactly the large random reads expert streaming does.
 
 ## The version pin chain
 

@@ -178,3 +178,10 @@ it is not a number anyone quotes in a model card.
 - **SSD streaming.** Sometimes proposed as a way around a small expert pool.
   A Gen4 NVMe is ~7 GB/s, so the DeepSeek example above becomes 0.5 s per token.
   FreeToken does not do it, and the arithmetic says not to want it.
+
+  An engine that *does* do it now exists — Colibri, July 2026 — and it vindicates
+  this bullet rather than overturning it: its measured throughput lands **below**
+  the estimate above, partly because 7 GB/s is optimistic (ws03's Gen4 drive
+  measures 4.4 GB/s sequential). What it buys is reachability, not speed: models
+  too large for any host-RAM pool will load. See `freetoken-engine` for the
+  numbers and the caveats.
