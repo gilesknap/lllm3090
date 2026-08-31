@@ -19,6 +19,20 @@ One GPU, one engine. Everything below assumes that invariant.
 
 Ports: **1919** engine (OpenAI *and* Anthropic APIs) · **8080** panel.
 
+**`~/models` is not on the fast disk.** `/home` is a SATA MX500 and `/` is the
+Gen4 NVMe, so every cold model load reads at the SATA ceiling. Measured with
+`O_DIRECT`, 2026-08-31:
+
+| | `/` (Lexar NQ790, NVMe Gen4) | `/home` (Crucial MX500, SATA) |
+|---|---|---|
+| sequential | 4.4 GB/s | 0.53 GB/s |
+| random 1 MiB | 5.15 GB/s | 0.37 GB/s |
+
+A 17.7 GB checkpoint is therefore ~33 s to load rather than ~4. Moving the
+directory needs a destination on `/`, which is root-owned; `MODELS_DIR` is an
+env var (`LLLM3090_MODELS_DIR`) and a symlink at `~/models` works, so the
+package needs to know nothing about it.
+
 ## Install and upgrade
 
 ```bash
@@ -50,6 +64,36 @@ The panel at `http://127.0.0.1:8080` does the same and streams the engine log.
 It binds loopback **by design** — its endpoints start processes with no
 authentication, so remote access is an SSH tunnel, never a LAN bind.
 
+## Speculative decoding
+
+The pinned build's `--spec-type` accepts `draft-simple, draft-eagle3,
+draft-mtp, draft-dflash, draft-dspark` and five ngram variants. Only one of
+them is worth having here.
+
+**MTP is on automatically and needs nothing.** `engine.start` reads the
+checkpoint's header (`lllm3090.gguf`) and adds `--spec-type draft-mtp` when the
+`nextn` tensors are present. Measured on the 3090, paired, GPU idle either
+side: Qwen3.8-27B **34.9 -> 56.6** tok/s (1.62x), Qwen3.6-35B-A3B-MTP **130.5
+-> 171.8** (1.32x, 179.9 on code editing). It is decided from the file, never
+from the catalogue: llama.cpp *refuses to start* with that flag against a
+checkpoint lacking the head, and a metadata key is not proof -- a conversion can
+announce `nextn_predict_layers` and ship no tensors.
+
+**ngram is a regression, and stacking it with MTP is worse than either.**
+Measured on Qwen3.8-27B: `ngram-cache` alone 0.88x, `draft-mtp,ngram-cache`
+1.42x against MTP's own 1.62x. Hit rates on novel generation are low, so you pay
+for rejected drafts and the weak drafts displace good ones. The advice online
+that advanced users should combine them is wrong on this box. It may flip for
+output that copies a long input verbatim; it does not help general agentic work.
+
+**A drafter costs VRAM, which is the resource the catalogue defends.** DFlash
+and EAGLE-3 need a separate resident model, so they buy speed with context.
+Prefer MTP, which lives inside the checkpoint and costs only its own weights.
+
+**Check whether a checkpoint has the head before downloading a variant:**
+`python -c "from lllm3090 import gguf; print(gguf.has_mtp('<path>'))"`. Vendors
+ship `-MTP-` repos alongside the plain ones.
+
 ## Failure modes worth knowing
 
 Each of these presented as something other than what it was. That is why they
@@ -77,9 +121,17 @@ before concluding anything.
 fit and the context does not, allocation fails after the model has loaded.
 Restart with a smaller `--ctx` rather than a smaller model.
 
-**Downloads resume.** They are threads and die with the panel, leaving a `.part`
-file; the panel picks those up on startup. A repeatedly failing download usually
-means the file was renamed upstream, not that the network is bad.
+**Downloads resume -- the panel's do.** They are threads and die with the panel,
+leaving a `.part` file; the panel picks those up on startup. A repeatedly
+failing download usually means the file was renamed upstream, not that the
+network is bad.
+
+**`hf_hub_download` does not.** Killed mid-transfer and restarted, it opens a
+*new* `.incomplete` blob under a different suffix and re-fetches from zero,
+leaving the old one on disk forever. Observed on 1.28.0: 8.3 GB orphaned and
+18.2 GB re-downloaded. Check
+`<local_dir>/.cache/huggingface/download/*.incomplete` after any interrupted
+fetch and delete what the running download is not using.
 
 **A model's chat template can reject a client outright.** Qwen3.8-27B's template
 raises on a system message that is not first, and agent harnesses send them
@@ -108,6 +160,23 @@ will silently test stale code.
 matches the shell running it and kills the script partway with no error saying
 why. Use the pidfile.
 
+## The suite is green here and red on a runner
+
+A CI runner has no GPU, so `hardware.detect()` borrows the reference profile
+with the *documented* `DRIVER_RESERVE_MIB` rather than the live figure this card
+reports through `nvidia-smi`. Every context number therefore lands a few
+thousand tokens elsewhere, and a test that asserts an exact window -- or an
+inequality that is close -- passes here and fails there.
+
+Reproduce it before guessing:
+
+```python
+import unittest.mock as mock
+from lllm3090 import hardware
+with mock.patch.object(hardware, "_smi", return_value=None):
+    ...
+```
+
 ## Before you measure anything
 
 On a single-GPU box the benchmark and the workload are the same machine.
@@ -133,3 +202,17 @@ On a single-GPU box the benchmark and the workload are the same machine.
 - Discard anything that overlapped real use. A live session against the same
   engine once produced an apparent 47% throughput regression that was pure
   contention.
+- **Three samples is not a measurement when the variance is real.**
+  Speculative decoding's acceptance rate swings with content: three runs of
+  MTP on the A3B spanned 100.8 to 171.9 tok/s and the median read as *no gain
+  at all*. Seven warm samples put it at 1.32x, with MTP's worst run above
+  baseline's best. Where the spread is wide, take more samples before believing
+  the middle one.
+- **Discard the first request after a start.** It carries graph build and
+  warm-up and has come in low every time -- 8.8 tok/s against a 30 steady
+  state in one case.
+- **The engine is not deterministic at temperature 0.** Two identical requests
+  in one server produce different text; the *first* request after a restart is
+  reproducible across restarts. So compare like with like, and never attribute
+  a text difference to a flag without running that control first -- it is what
+  stopped MTP being blamed for output drift that plain decode also has.

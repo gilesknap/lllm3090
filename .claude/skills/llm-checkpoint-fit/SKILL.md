@@ -167,6 +167,30 @@ fails at load — the engine supports per-tensor fp8 (W8A16) and 128×128 block
 fp8, not channel-wise W8A8. Same model, same bit width, different vendor,
 different outcome.
 
+## 5b. Format: GGUF or EXL3, on a 3090
+
+Asked periodically because EXL3 is reported as "better for 30/40 series". Half
+right, and the wrong half here: its GEMM kernel reaches memory-bound latency at
+4bpw on **Ada**, and is documented as still needing work on **Ampere**. A 3090
+is the unfinished side.
+
+Two more reasons it does not pay on this card:
+
+- **Above ~4 bpw the formats measure as equivalent.** EXL3's trellis
+  quantisation wins below ~3 bpw -- keeping a 70B coherent at 1.6 bpw under
+  16 GB. A catalogue that lives at IQ4_XS is in the regime where they tie.
+- **It is a second engine, not a file format swap.** EXL3 needs ExLlamaV3, with
+  its own process model and non-GGUF model directories, and every KV figure and
+  measured speed is calibrated to llama.cpp's q8 cache. Switching invalidates
+  the numbers until they are all re-measured.
+
+You would also hand back MTP self-speculation, `--mmproj` vision, and the
+native `/v1/messages` endpoint that lets an Anthropic client connect with no
+proxy.
+
+**Right for:** a 4090 owner fitting a 70B at 2.5-3 bpw that otherwise will not
+fit. Not for a 24 GB Ampere card running a sparse 35B at 4 bits.
+
 ## 6. Speed, if it fits: a roofline in one line
 
 ```
