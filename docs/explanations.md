@@ -7,5 +7,6 @@ explanations/what-fits
 explanations/dense-vs-moe
 explanations/one-gpu
 explanations/other-cards
+explanations/going-faster
 explanations/landscape
 ```
