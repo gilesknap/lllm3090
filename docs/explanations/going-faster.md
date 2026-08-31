@@ -10,14 +10,34 @@ set aside, what it would cost to have, and what is parked and why.
 If you want the levers themselves explained rather than scored, start with
 [](what-makes-it-fast.md); this page assumes them and reports numbers.
 
-The short version: **nothing has displaced multi-token prediction**, so the
-engine's defaults are the best combination tried on this card. Two drafters were
-measured and rejected. CUDA was built and is genuinely faster — 1.3× on prefill,
-1.28× on decode — but for a toolkit, a compiler and a binary tied to one card,
-and it is not the 3–4× this page used to claim. The useful findings are mostly
-in *why*, and in one variable, draft width, that turned out to matter more than
-the choice of drafter and to be a property of the backend rather than of any
-drafter at all.
+## Every lever, on Qwen3.8-27B
+
+All of it measured on one RTX 3090 against the dense 27B at Q4_K_S, on llama.cpp
+b10715. Ranges span three workloads — prose, a code edit, and copying 369 lines
+back with one identifier renamed — and each ratio is against its own run's
+baseline, so they compare with each other and not with absolute numbers from
+elsewhere.
+
+| lever | moves | effect | verdict |
+|---|---|---|---|
+| [Multi-token prediction](#already-in-the-engine) | decode | **1.61–1.80×** | **on by default** |
+| [q8_0 KV cache](#already-in-the-engine) | capacity | 2× the conversation | **on by default** |
+| [Flash attention](#already-in-the-engine) | both | not separately measured | **on by default** |
+| [CUDA instead of Vulkan](#cuda-instead-of-vulkan-13-not-34) | both | 1.31× prefill, 1.28× decode | not adopted — costs a toolkit and a per-card binary |
+| [DFlash2 drafter](#measured-and-not-adopted-dflash2) | decode | 0.90–1.04× *against MTP* | rejected — a wash, for 36k tokens of context |
+| [Draft width 7](#draft-width-matters-more-than-which-drafter) | decode | 0.78–0.98× *against width 3* | rejected — the published setting is worse here |
+| [Prompt lookup (ngram)](#measured-and-set-aside-prompt-lookup-drafting) | decode | 0.65–0.88× | rejected — a slowdown on every workload |
+| [ngram stacked on MTP](#measured-and-set-aside-prompt-lookup-drafting) | decode | 0.84–0.90× *against MTP* | rejected — weak drafts displace good ones |
+| [q4_0 KV cache](#already-in-the-engine) | capacity | 4× the conversation, ~0.63× decode | not taken — never measured here |
+| [coopmat2](#still-unanswered-coopmat2) | prefill | unknown | cannot be determined from this build |
+| [TurboQuant KV](#parked) | capacity | claimed ~2.5× against q8_0 | parked — not merged anywhere |
+| [vLLM / AWQ-Marlin](#parked) | throughput | 8× at ten concurrent users | out of scope — this engine serves one |
+
+**Nothing has displaced multi-token prediction.** The engine's defaults are the
+best combination tried on this card, and the interesting content below is mostly
+*why* — particularly one variable, draft width, which turned out to matter more
+than the choice of drafter and to be a property of the backend rather than of
+any drafter at all.
 
 ## Two clocks, not one
 
@@ -215,7 +235,7 @@ The single most useful line in those tables is Vulkan going **1026.9 → 1014.0*
 from pp512 to pp4096 while CUDA goes 1217.4 → 1343.8. Vulkan gets *nothing* from
 a wider batch. CUDA gets 10%.
 
-That is the mechanism behind the draft-width finding above:
+That is the mechanism behind [the draft-width finding](#draft-width-matters-more-than-which-drafter):
 verifying k drafted tokens is a batched forward pass, so a backend that does not
 reward wider batches will punish wider drafts. It also means every drafter
 verdict on this page was measured on the backend least able to make drafting pay,
@@ -243,8 +263,8 @@ were rejected.
   hold.
 - **A weaker identity.** A downloaded build is a tag and a digest. A compiled one
   reports `build 1, commit 662a0b0`, because a shallow clone has no tag history:
-  only the commit is real, and nobody attests to the binary. See "What a build has to
-  prove", below.
+  only the commit is real, and nobody attests to the binary. See [what a build has to
+  prove](#what-a-build-has-to-prove).
 
 So the question is no longer whether CUDA is faster — it is — but whether 1.3×
 is worth asking every user for a toolkit, a compiler and a per-card binary, in a
