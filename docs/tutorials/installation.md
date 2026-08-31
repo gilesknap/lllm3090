@@ -92,17 +92,31 @@ multi-token prediction on, because that is how the engine has always run:
 |---|---|---|---|
 | cold prefill, 80k tokens | 118.2 s | 90.0 s | 1.31× |
 | decode, no speculation | 32.9 tok/s | 42.2 tok/s | 1.28× |
-| decode, as each backend serves it | 54.8 tok/s | 84.9 tok/s | **1.55×** |
-| decode, copy-heavy, best config | 59.7 tok/s | 115.1 tok/s | **1.93×** |
+| **decode, as the engine runs it** | **54.8 tok/s** | **84.9 tok/s** | **1.55×** |
 
-The first turn on a very long prompt is slow either way — about two minutes at
-80k against a minute and a half — and not slow at all afterwards, because the
-prefix cache carries the prompt between turns.
+The last row is the one to judge by, and it is not the same claim as the one
+above it. The engine turns on the model's multi-token prediction head wherever
+the checkpoint has one, and that head is worth more on CUDA than on Vulkan —
+2.0× against 1.6× — so the backend advantage and the speculation advantage
+multiply. A comparison run with speculation switched off says 1.28× and
+understates what you would feel by a quarter. On copy-heavy work, where two
+further levers pay on CUDA and lose on Vulkan, the gap approaches 2×.
+
+So the first turn on a very long prompt is slow either way — about two minutes
+at 80k against a minute and a half — and not slow at all afterwards, because the
+prefix cache carries the prompt between turns. **Vulkan costs you roughly a
+third of the speed for none of the setup**, and the setup is a 4–6 GB toolkit, a
+local compile, and a binary that only runs on the card it was built for. That is
+still the trade this project makes, and
+[](../explanations/going-faster.md) sets out what it is made of.
+
+### Taking the trade
 
 `lllm3090 setup` offers to build a CUDA engine when it finds a toolkit new
-enough, and `lllm3090 build-cuda` does it on its own. Neither builds unprompted,
-and neither switches: Vulkan keeps serving until you point
-`LLLM3090_LLAMA_DIR` at what was built. What it costs:
+enough, and `lllm3090 build-cuda` does it on its own. Neither builds unprompted
+— `--yes` included — and neither switches: Vulkan keeps serving until you point
+`LLLM3090_LLAMA_DIR` at what was built. Beyond the toolkit and the compile, what
+it costs:
 
 - **CUDA 13.3 or newer, from NVIDIA's repository.** Not `apt install
   nvidia-cuda-toolkit` — Ubuntu 26.04's 13.1 declares `rsqrt`/`rsqrtf` without
@@ -119,5 +133,3 @@ and neither switches: Vulkan keeps serving until you point
   has no tag history — only the commit is real, and nobody attests to the
   binary. That is a different promise, and it is the reason nothing switches
   the active engine for you.
-
-See [](../explanations/going-faster.md) for what the trade is made of.
