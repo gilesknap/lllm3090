@@ -32,6 +32,10 @@ extensions = [
 ]
 
 myst_enable_extensions = ["colon_fence"]
+#: Generate anchors for headings down to three levels, so a page can link to a
+#: section of itself or of another page. Without it `[](#some-heading)` builds
+#: to a warning rather than a link, which under -W is a failed docs build.
+myst_heading_anchors = 3
 
 nitpicky = True
 nitpick_ignore = [
