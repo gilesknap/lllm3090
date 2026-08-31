@@ -54,6 +54,87 @@ and the fastest configuration for copy-heavy work is one this page had written
 off. [What the re-measurement settled](#what-the-cuda-re-measurement-settled)
 records which predictions that confirmed and which it killed.
 
+## The fastest this model goes
+
+The practical summary of everything below, for the dense 27B on this 3090.
+
+Decode on this card has a memory roofline: about 16 GB of weights read per
+token at 936 GB/s is **roughly 58 tok/s**, and no amount of tuning reads memory
+faster than memory goes. Speculation is the one lever that beats it, because an
+accepted draft rides along on a read that already happened. So the ladder is:
+
+| | prose | code-edit | long-copy | peak vs roofline |
+|---|---|---|---|---|
+| memory roofline, no speculation | ~58 | ~58 | ~58 | 1.00× |
+| Vulkan, no speculation | 34.1 | 33.8 | 32.8 | 0.59× |
+| **Vulkan + MTP — what installs today** | **54.8** | **55.7** | **59.7** | 1.03× |
+| CUDA, no speculation | 43.2 | 43.6 | 42.4 | 0.75× |
+| **CUDA + MTP** | **84.9** | **89.0** | **94.0** | 1.62× |
+| CUDA + MTP + ngram, width 7 | 72.9 | 76.0 | **115.1** | **1.98×** |
+
+**The best measured result for this model on this card is 115.1 tok/s**, on
+copy-heavy work, at just under twice what the card can do without guessing. The
+last column is each row's best workload against the roofline, and the two rows
+that exceed it are not anomalies — that is the definition of speculative
+decoding working.
+
+### What to actually run
+
+**On the engine that installs today, run the default and change nothing.**
+
+```bash
+lllm3090 start Qwen3.8-27B
+```
+
+MTP is switched on from the checkpoint's own tensors, the KV cache is q8_0,
+flash attention is on and every layer is on the GPU. **Nothing measured on this
+page beats that on Vulkan** — it is already at the card's memory roofline, which
+speculation is the only reason it can reach at all. The three tempting additions
+are all regressions there: `ngram-cache` is 0.65×,
+`--spec-draft-n-max 7` is 0.78×, and DFlash2 is a wash that costs about 36k
+tokens of context.
+
+**If you want the 1.6×, the engine has to change, not the flags.** A CUDA build
+is [what it costs to have](#what-it-costs-to-have), and once built the install
+can be pointed at it without being reinstalled over:
+
+```bash
+LLLM3090_LLAMA_DIR=~/.local/share/lllm3090/engines/b10715-cuda-sm86 \
+  lllm3090 start Qwen3.8-27B --ctx 150000
+```
+
+`LLLM3090_LLAMA_DIR` redirects both the binary and the `LD_LIBRARY_PATH` the
+`ggml` shared objects are found on, which is what a compiled engine needs. It
+reaches the engine only when the *CLI* starts it, though — the panel starts the
+engine in its own process, so a model started from the browser gets whatever the
+systemd unit's environment says, which is Vulkan.
+
+The smaller `--ctx` is not optional. `catalog.fit` plans against a fixed VRAM
+envelope and does not know which backend it is planning for, and CUDA reports
+24125 MiB where Vulkan reports 24822 — about 22k tokens of q8_0 KV. Left to plan
+its usual ~172k window, the load will get through the weights and then fail on
+the KV allocation, which reads as a model that loaded and then died.
+
+**The copy-heavy configuration is not reachable from this CLI.**
+`engine.start` hardcodes `--spec-type draft-mtp` and passes no draft width, with
+no escape hatch for extra flags, so the 115.1 tok/s row needs `llama-server` run
+by hand:
+
+```
+--spec-type draft-mtp,ngram-cache --spec-draft-n-max 7
+```
+
+It is worth it only for sessions that are mostly reproducing their input —
+refactoring, renaming, reformatting. It costs about 14% on prose and code
+editing, so it is a per-session choice and not a better default.
+
+:::{note}
+Every figure above was measured at `--ctx-size 40960` with short prompts.
+Decode slows as the KV cache fills, and the panel plans this model a window four
+times that size. **How much it slows has not been measured here**, so treat
+these as the top of the range rather than what a long session will hold.
+:::
+
 ## Two clocks, not one
 
 Every lever below moves exactly one of these, and confusing them wastes a day:
@@ -364,10 +445,37 @@ Community scoreboards put CUDA about 10% ahead on generation. Here it is **28%**
 — 32.9 to 42.2 tok/s before any speculation. That is the larger of the two
 effects in practice, because decode is what a conversation spends its time doing.
 
-The sweep confirms that figure from a second instrument: its `baseline` config is
-no speculation at all, and reads 34.1 / 33.8 / 32.8 tok/s on Vulkan against
-43.2 / 43.6 / 42.4 on CUDA — 1.27 / 1.29 / 1.29×, where `llama-bench` said 1.28.
-Two different harnesses, three workloads, the same number.
+### The baselines every ratio divides by
+
+Every multiplier on this page is a config over its run's `baseline` — no
+speculation at all — so the baselines are worth showing directly rather than
+leaving implied. Four sweeps have produced one:
+
+| baseline, tok/s | prose | code-edit | long-copy |
+|---|---|---|---|
+| Vulkan, ngram run | 34.1 | 33.8 | 32.8 |
+| Vulkan, DFlash2 run | 32.8 | 32.4 | 31.6 |
+| CUDA, width-3 run | 43.2 | 43.6 | 42.4 |
+| CUDA, width-7 run | 43.4 | 41.6 | 39.5 |
+
+**Across backends the number is solid.** All twelve pairings of a CUDA run
+against a Vulkan one span **1.20–1.35×, mean 1.285×** — against `llama-bench`'s
+independent 1.283× on tg64. Two harnesses, three workloads, four pairings, one
+answer. That agreement is what licenses the cross-run absolute comparisons
+elsewhere on this page, including the 1.55–1.60× for the shipped MTP
+configuration; without it they would be two unrelated tables.
+
+**Within a backend it is less comfortable.** Those four rows are the same
+invocation — `--spec-draft-n-max` never reaches the `baseline` config, so both
+CUDA rows ran identical command lines against the identical checkpoint. They
+disagree by up to 6.8%. The Vulkan pair disagree by about 4%.
+
+That spread is the floor on what this instrument can resolve, and it is the same
+size as several of the effects it is being asked to judge. A 4% difference
+between two configs measured in different runs is not a finding. Ratios taken
+within a single run are much tighter — seven samples of the width-3 `long-copy`
+baseline spanned 42.36 to 42.46 — which is why the tables above never compare
+across runs when they can avoid it, and say so when they cannot.
 
 ### The compounding was underestimated
 
