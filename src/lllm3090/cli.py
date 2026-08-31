@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 from importlib import resources
+from pathlib import Path
 
 import typer
 
