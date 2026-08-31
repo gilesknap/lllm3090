@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import getpass
 import hashlib
 import os
 import pathlib
@@ -377,6 +378,37 @@ def _apt_missing() -> list[str]:
     return missing
 
 
+def _whoami() -> str:
+    """The current user's name, without a terminal to ask for one.
+
+    ``os.getlogin`` reads the controlling terminal and raises ``OSError``
+    without one -- in a service, a pipeline, or an agent session. It would do so
+    while printing the command that recovers from a permission error, which is
+    the worst possible moment to raise instead of speaking.
+    """
+    try:
+        return getpass.getuser()
+    except Exception:
+        return os.environ.get("USER") or os.environ.get("LOGNAME") or "$USER"
+
+
+def _checkpoints_under(path: Path) -> Path | None:
+    """Where ``path`` leads, if anything is stored there, else ``None``.
+
+    Follows a symlink deliberately. ``~/models`` is a symlink on any machine
+    that has already been through ``--model-folder``, and repointing one that
+    leads to 180 GB does not delete anything -- it makes it invisible, while the
+    disk stays full. That is a worse failure than deleting, because nothing
+    reports it.
+    """
+    if not path.exists():
+        return None
+    resolved = path.resolve()
+    if not resolved.is_dir():
+        return None
+    return resolved if any(resolved.iterdir()) else None
+
+
 def _configure_models_folder(requested: str | None) -> None:
     """Settle where checkpoints live, before anything is downloaded into it.
 
@@ -401,7 +433,10 @@ def _configure_models_folder(requested: str | None) -> None:
         typer.echo("\n" + warning)
         raise typer.Exit(1)
 
-    target = Path(requested).expanduser()
+    # Absolute from here on: symlink_to() stores what it is given, so a
+    # relative --model-folder would be resolved against ~/ and
+    # `--model-folder models` would point ~/models at itself.
+    target = Path(requested).expanduser().absolute()
     if not target.exists():
         try:
             target.mkdir(parents=True, exist_ok=True)
@@ -409,8 +444,7 @@ def _configure_models_folder(requested: str | None) -> None:
             typer.echo(
                 f"\nCannot create {target}: its parent belongs to another user.\n"
                 f"Create it once, then re-run this command:\n\n"
-                f"    sudo mkdir -p {target} && sudo chown "
-                f"{os.getlogin() if hasattr(os, 'getlogin') else '$USER'} {target}\n"
+                f"    sudo mkdir -p {target} && sudo chown {_whoami()} {target}\n"
             )
             raise typer.Exit(1) from None
     if not target.is_dir():
@@ -419,8 +453,7 @@ def _configure_models_folder(requested: str | None) -> None:
     if not os.access(target, os.W_OK):
         typer.echo(
             f"\n{target} exists but you cannot write to it. Give it to yourself:\n\n"
-            f"    sudo chown "
-            f"{os.getlogin() if hasattr(os, 'getlogin') else '$USER'} {target}\n"
+            f"    sudo chown {_whoami()} {target}\n"
         )
         raise typer.Exit(1)
 
@@ -436,22 +469,34 @@ def _configure_models_folder(requested: str | None) -> None:
     # Everything else in the project reads config.MODELS_DIR, which defaults to
     # ~/models. A symlink there means the choice needs no environment variable,
     # no edit to the service unit, and nothing to remember on the next upgrade.
+    #
+    # Whatever is there now, it is only safe to replace when it holds nothing.
+    # A symlink counts: repointing one that leads to 180 GB of checkpoints does
+    # not delete them, but it does make them invisible to every part of this
+    # program, which is worse -- the disk stays full and the models are gone.
+    holding = _checkpoints_under(default)
+    if holding is not None:
+        typer.echo(
+            f"\n{default} already leads to checkpoints in {holding}, and setup "
+            f"will not move them for you.\nCopy them, verify, then swap the "
+            f"symlink in:\n\n"
+            f"    rsync -a --info=progress2 {holding}/ {target}/\n"
+            f"    rsync -acn {holding}/ {target}/     # must print nothing\n"
+            f"    rm {default} && ln -s {target} {default}\n"
+            if default.is_symlink() else
+            f"\n{default} already holds checkpoints, and setup will not move "
+            f"them for you.\nCopy them, verify, then swap the symlink in:\n\n"
+            f"    rsync -a --info=progress2 {holding}/ {target}/\n"
+            f"    rsync -acn {holding}/ {target}/     # must print nothing\n"
+            f"    mv {default} {default}.old && ln -s {target} {default}\n"
+        )
+        raise typer.Exit(1)
     if default.is_symlink():
         default.unlink()
     elif default.is_dir():
-        if any(default.iterdir()):
-            typer.echo(
-                f"\n{default} already holds checkpoints, and setup will not move "
-                f"{storage.free_gb(default):.0f} GB for you.\n"
-                f"Copy them, verify, then swap the symlink in:\n\n"
-                f"    rsync -a --info=progress2 {default}/ {target}/\n"
-                f"    rsync -acn {default}/ {target}/     # must print nothing\n"
-                f"    mv {default} {default}.old && ln -s {target} {default}\n"
-            )
-            raise typer.Exit(1)
         default.rmdir()
     default.parent.mkdir(parents=True, exist_ok=True)
-    default.symlink_to(target)
+    default.symlink_to(target.resolve())
     _echo_check("models dir", True, f"{default} -> {target}{where}")
 
 

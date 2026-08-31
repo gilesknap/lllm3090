@@ -192,3 +192,81 @@ def test_a_slow_default_stops_setup_with_an_explanation(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "not on an NVMe" in out
     assert "--model-folder" in out, "a refusal without a remedy is not actionable"
+
+
+def test_a_folder_that_does_not_exist_is_classified_by_its_parent(tmp_path):
+    """The case the whole check exists for, and the one it first got wrong.
+
+    A fresh install has no ``~/models``. Classifying only paths that already
+    exist meant every question about it answered "cannot tell" and the warning
+    stayed silent on exactly the machine that had not yet made the mistake.
+    """
+    root = fake_sys(tmp_path, {"nvme0n1": ["nvme0n1p2"], "sda": ["sda2"]})
+    link(root, 8, 2, root / "block/sda/sda2")
+    unborn = tmp_path / "not" / "created" / "yet"
+    with on_device(tmp_path, 8, 2):
+        assert storage.backing_disk(unborn, root) == "sda"
+        assert storage.slow_disk_warning(unborn, root) is not None
+
+
+def test_free_space_is_read_from_the_filesystem_that_will_hold_it(tmp_path):
+    """Otherwise a fresh install reports 0 GB free and looks full."""
+    assert storage.free_gb(tmp_path / "nope" / "still-nope") > 0
+
+
+def test_a_populated_symlink_target_is_never_repointed(tmp_path):
+    """Repointing a link to 180 GB does not delete it -- it hides it.
+
+    Worse than deleting, because the disk stays full and nothing reports why.
+    Any machine that has already run --model-folder has a symlink here, so this
+    is the ordinary case rather than an exotic one.
+    """
+    real, default, chosen = tmp_path / "srv", tmp_path / "models", tmp_path / "other"
+    real.mkdir()
+    (real / "Some-Model").mkdir()
+    default.symlink_to(real)
+
+    with mock.patch.object(config, "MODELS_DIR", default), pytest.raises(typer.Exit):
+        cli._configure_models_folder(str(chosen))
+
+    assert default.is_symlink() and default.resolve() == real.resolve()
+    assert (real / "Some-Model").is_dir()
+
+
+def test_an_empty_symlink_target_may_be_repointed(tmp_path):
+    """Nothing stored means nothing to lose."""
+    real, default, chosen = tmp_path / "srv", tmp_path / "models", tmp_path / "other"
+    real.mkdir()
+    default.symlink_to(real)
+    with mock.patch.object(config, "MODELS_DIR", default):
+        cli._configure_models_folder(str(chosen))
+    assert default.resolve() == chosen.resolve()
+
+
+def test_a_relative_model_folder_cannot_point_the_link_at_itself(tmp_path, monkeypatch):
+    """`symlink_to` stores what it is given, so a relative path is resolved
+    against the link's own directory -- `--model-folder models` aimed ~/models
+    at ~/models."""
+    monkeypatch.chdir(tmp_path)
+    default = tmp_path / "models"
+    with mock.patch.object(config, "MODELS_DIR", default):
+        cli._configure_models_folder("fast-models")
+    assert default.is_symlink()
+    assert default.readlink().is_absolute(), "a relative link is a trap"
+    assert default.resolve() == (tmp_path / "fast-models").resolve()
+
+
+def test_the_username_is_found_without_a_terminal(monkeypatch):
+    """`os.getlogin()` needs a controlling terminal and raises without one.
+
+    It was being called to build the `sudo chown` line that recovers from a
+    permission error -- raising there replaces the remedy with a traceback.
+    """
+    monkeypatch.setattr(
+        cli.getpass, "getuser", mock.Mock(side_effect=OSError("no login"))
+    )
+    monkeypatch.setenv("USER", "someone")
+    assert cli._whoami() == "someone"
+    monkeypatch.delenv("USER", raising=False)
+    monkeypatch.delenv("LOGNAME", raising=False)
+    assert cli._whoami() == "$USER", "still a paste-able command, not a crash"

@@ -28,17 +28,41 @@ SYS_DEV_BLOCK = Path("/sys/dev/block")
 SYS_BLOCK = Path("/sys/block")
 
 
+def nearest_existing(path: Path | str) -> Path | None:
+    """The closest ancestor of ``path`` that exists, or ``path`` itself.
+
+    A directory that has not been created yet still has a filesystem: it is
+    whichever one holds its parent. Without this the check is useless in the
+    only situation it was written for -- a fresh install, where ``~/models``
+    does not exist, every question about it answers "cannot tell", and the
+    warning stays silent on exactly the machine that needed it.
+    """
+    here = Path(path).expanduser().absolute()
+    while not here.exists():
+        if here.parent == here:
+            return None
+        here = here.parent
+    return here
+
+
 def backing_disk(path: Path | str, sys_root: Path | None = None) -> str | None:
     """Kernel name of the whole disk behind ``path`` -- ``nvme0n1``, ``sda``.
 
-    ``None`` when there is no block device to name: a network mount, a tmpfs, or
-    a path that does not exist. Callers must treat that as "cannot tell" rather
-    than as "slow", because refusing to proceed on a filesystem this cannot
-    classify would break every container and NFS home directory.
+    A path that does not exist yet is classified by the nearest ancestor that
+    does, because that is the filesystem it will be created on.
+
+    ``None`` when there is no block device to name: a network mount, a tmpfs,
+    or a path with no existing ancestor at all. Callers must treat that as
+    "cannot tell" rather than as "slow", because refusing to proceed on a
+    filesystem this cannot classify would break every container and NFS home
+    directory.
     """
     dev_block = (sys_root or Path("/sys")) / "dev/block"
+    existing = nearest_existing(path)
+    if existing is None:
+        return None
     try:
-        st = os.stat(path)
+        st = os.stat(existing)
     except OSError:
         return None
     node = dev_block / f"{os.major(st.st_dev)}:{os.minor(st.st_dev)}"
@@ -98,8 +122,12 @@ def writable_mount_on(disk: str, sys_root: Path | None = None) -> Path | None:
 
 
 def free_gb(path: Path | str) -> float:
+    """Free space on the filesystem that holds -- or will hold -- ``path``."""
+    existing = nearest_existing(path)
+    if existing is None:
+        return 0.0
     try:
-        return shutil.disk_usage(path).free / 1e9
+        return shutil.disk_usage(existing).free / 1e9
     except OSError:
         return 0.0
 
