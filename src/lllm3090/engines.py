@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
+import subprocess
 import tarfile
 import tempfile
 import urllib.error
@@ -149,3 +151,97 @@ def fetch(build: str, target: Path, expect: str | None = None) -> str:
         if path.exists():
             path.chmod(0o755)
     return got
+
+
+# ---------------------------------------------------------------------------
+# Which backend a build was compiled against
+# ---------------------------------------------------------------------------
+# Nothing above this line cares -- a tag identifies an archive, and while there
+# was only one archive that was the whole story. A locally compiled CUDA engine
+# has no tag and no digest, so the only thing that can identify it is the
+# binary itself, and the only thing that can ask the binary is the binary.
+
+#: The device-name prefixes llama.cpp prints, and the backend each one means.
+#:
+#: ``--list-devices`` names devices, not backends: a Vulkan build reports
+#: ``Vulkan0``, a CUDA build ``CUDA0``. That is the only place the distinction
+#: is visible from outside -- both ship a binary called ``llama-server``,
+#: neither writes a backend banner to its log on this build, and ``--version``
+#: reports the commit, which for two builds of the same commit is the same.
+DEVICE_BACKENDS = {
+    "cuda": "cuda",
+    "vulkan": "vulkan",
+    "rocm": "rocm",
+    "sycl": "sycl",
+    "metal": "metal",
+}
+
+#: What a build reports when it found no accelerator at all -- and what an
+#: engine that could not be asked is treated as. That is deliberate: ``cpu`` is
+#: the backend with no measured envelope of its own and no special flags, so
+#: falling back to it withholds a claim rather than making a wrong one.
+CPU = "cpu"
+
+#: Answers to :func:`backend`, keyed the way :func:`lllm3090.engine.supports`
+#: keys its own -- by path *and* mtime, because ``install-engine --force``
+#: replaces a binary underneath a panel that has been up for days, and an
+#: answer cached from the old one would outlive it.
+_BACKENDS: dict[tuple[str, float], str] = {}
+
+
+def _backend_from_devices(text: str) -> str:
+    """The backend named by a ``--list-devices`` listing.
+
+    Lines look like ``  CUDA0: NVIDIA GeForce RTX 3090 (24125 MiB, ...)``. The
+    device index is stripped rather than matched, because a two-card machine
+    reports ``CUDA0`` and ``CUDA1`` and both mean the same backend.
+    """
+    for line in text.splitlines():
+        head = line.strip().split(":", 1)[0]
+        name = head.rstrip("0123456789").lower()
+        if name in DEVICE_BACKENDS:
+            return DEVICE_BACKENDS[name]
+    return CPU
+
+
+def backend(directory: Path | None = None) -> str:
+    """Which compute backend the engine in ``directory`` was built against.
+
+    Answers ``"cuda"``, ``"vulkan"`` or ``"cpu"`` -- and names ROCm, SYCL or
+    Metal if it ever meets one. This is not cosmetic. The KV cache costs about
+    10% more per token on CUDA than on Vulkan and the backend carries its own
+    fixed overhead, so a planner that does not know which one it is planning
+    for over-promises context on the more expensive of the two; and the
+    speculation settings that win on one lose on the other. A package with two
+    backends on disk and no way to tell them apart gets both wrong.
+
+    Cached, because ``catalog.fit`` runs once per catalogue entry per
+    ``lllm3090 models`` and a subprocess apiece would be felt.
+    """
+    directory = directory or config.LLAMA_DIR
+    binary = directory / "llama-server"
+    try:
+        key = (str(binary), binary.stat().st_mtime)
+    except OSError:
+        # No engine there at all. Not an error -- ``models`` runs happily
+        # before ``install-engine`` on a fresh machine -- but nothing about a
+        # binary that is not there can be claimed.
+        return CPU
+    if key in _BACKENDS:
+        return _BACKENDS[key]
+    try:
+        out = subprocess.run(
+            [str(binary), "--list-devices"],
+            capture_output=True, text=True, timeout=60, check=False,
+            # The build's own shared objects, not the system's. Two engines sit
+            # on this disk and both ship a libggml; without this the one that
+            # happens to be found first would answer for the other.
+            env=dict(os.environ, LD_LIBRARY_PATH=str(directory)),
+        )
+        text = out.stdout + out.stderr
+    except (OSError, subprocess.SubprocessError):
+        # Not cached: a timeout under load is a fact about the moment, and
+        # remembering it would make one busy minute permanent.
+        return CPU
+    _BACKENDS[key] = _backend_from_devices(text)
+    return _BACKENDS[key]

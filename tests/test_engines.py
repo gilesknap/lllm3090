@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
+import subprocess
 import tarfile
 import urllib.error
 
@@ -166,3 +168,130 @@ def test_an_unreachable_api_is_reported_as_such(monkeypatch):
     monkeypatch.setattr(engines.urllib.request, "urlopen", boom)
     with pytest.raises(engines.BuildError, match="could not read the release"):
         engines.published_digest(CANDIDATE)
+
+
+# ---------------------------------------------------------------------------
+# Which backend a build was compiled against
+# ---------------------------------------------------------------------------
+
+VULKAN_DEVICES = """\
+Available devices:
+  Vulkan0: NVIDIA GeForce RTX 3090 (24822 MiB, 20233 MiB free)
+"""
+
+CUDA_DEVICES = """\
+Available devices:
+  CUDA0: NVIDIA GeForce RTX 3090 (24125 MiB, 19511 MiB free)
+"""
+
+
+@pytest.fixture
+def probe(monkeypatch, tmp_path):
+    """An engine directory whose binary answers --list-devices with what you say."""
+    engines._BACKENDS.clear()
+    directory = tmp_path / "engine"
+    directory.mkdir()
+    (directory / "llama-server").write_text("#!/bin/sh\n")
+    calls: list[list[str]] = []
+
+    class Result:
+        stdout = ""
+        stderr = ""
+
+    def answer(text: str) -> None:
+        def fake_run(argv, **kw):
+            calls.append(argv)
+            out = Result()
+            out.stdout = text
+            return out
+
+        monkeypatch.setattr(engines.subprocess, "run", fake_run)
+
+    answer.directory = directory
+    answer.calls = calls
+    return answer
+
+
+def test_a_vulkan_build_says_so(probe):
+    probe(VULKAN_DEVICES)
+    assert engines.backend(probe.directory) == "vulkan"
+
+
+def test_a_cuda_build_says_so(probe):
+    probe(CUDA_DEVICES)
+    assert engines.backend(probe.directory) == "cuda"
+
+
+def test_a_second_card_does_not_become_a_second_backend(probe):
+    """CUDA0 and CUDA1 are two devices and one backend. Matching the printed
+    name whole would fail to recognise either."""
+    probe(
+        "Available devices:\n"
+        "  CUDA0: NVIDIA GeForce RTX 3090 (24125 MiB, 19511 MiB free)\n"
+        "  CUDA1: NVIDIA GeForce RTX 3090 (24125 MiB, 24000 MiB free)\n"
+    )
+    assert engines.backend(probe.directory) == "cuda"
+
+
+def test_a_build_with_no_accelerator_is_cpu(probe):
+    probe("Available devices:\n")
+    assert engines.backend(probe.directory) == "cpu"
+
+
+def test_an_engine_that_is_not_installed_is_not_a_crash(tmp_path):
+    """`lllm3090 models` runs before `install-engine` on a fresh machine, and
+    it asks the planner, which asks this."""
+    engines._BACKENDS.clear()
+    assert engines.backend(tmp_path / "nothing-here") == "cpu"
+
+
+def test_the_probe_happens_once_per_binary(probe):
+    """`catalog.fit` runs once per catalogue entry per `lllm3090 models`. A
+    subprocess apiece would be felt."""
+    probe(CUDA_DEVICES)
+    for _ in range(5):
+        assert engines.backend(probe.directory) == "cuda"
+    assert len(probe.calls) == 1
+
+
+def test_a_replaced_binary_is_asked_again(probe):
+    """`install-engine --force` swaps the binary underneath a panel that has
+    been up for days. An answer cached from the old one would outlive it."""
+    probe(VULKAN_DEVICES)
+    assert engines.backend(probe.directory) == "vulkan"
+    binary = probe.directory / "llama-server"
+    os.utime(binary, (0, 0))
+    probe(CUDA_DEVICES)
+    assert engines.backend(probe.directory) == "cuda"
+
+
+def test_a_probe_that_could_not_be_run_is_not_remembered(probe, monkeypatch):
+    """A timeout under load is a fact about the moment. Caching it would make
+    one busy minute permanent, and the answer wrong for the rest of the day."""
+    def boom(argv, **kw):
+        raise subprocess.TimeoutExpired(argv, 60)
+
+    monkeypatch.setattr(engines.subprocess, "run", boom)
+    assert engines.backend(probe.directory) == "cpu"
+    probe(CUDA_DEVICES)
+    assert engines.backend(probe.directory) == "cuda"
+
+
+@pytest.mark.parametrize("build,want", [
+    ("b10715", "vulkan"),
+    ("b10715-cuda-sm86", "cuda"),
+])
+def test_the_real_engines_on_this_box_identify_themselves(build, want):
+    """The only test here that runs a real llama-server.
+
+    Everything above proves the parsing; this proves the parsing is of the
+    right thing. It is the one claim that cannot be made against a fixture --
+    that `--list-devices` is where the distinction is actually visible -- and
+    it is checkable because this machine has both builds on disk. Skipped
+    everywhere else, including CI.
+    """
+    engines._BACKENDS.clear()
+    directory = engines.bench_dir(build)
+    if not (directory / "llama-server").exists():
+        pytest.skip(f"{build} is not installed on this machine")
+    assert engines.backend(directory) == want
