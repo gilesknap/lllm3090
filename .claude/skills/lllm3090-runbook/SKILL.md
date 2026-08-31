@@ -138,11 +138,25 @@ two models' base factors, wrong for both in opposite directions. Three lessons:
 - **Only the backend multiplier generalises**: 1.100-1.136x across both models
   and both settings. Treat that as a constant and nothing else here.
 
-**Unmeasured lever:** `--spec-draft-type-k` / `--spec-draft-type-v` set the
-*draft* cache's type and `engine.start` does not pass them, so MTP's cache runs
-at the default while the main one is q8_0. Quantising it should recover much of
-the MTP term on the **shipped** engine. It cannot change output -- drafts are
-verified regardless -- so the only risk is acceptance, which is measurable.
+**MTP's draft cache is not quantised, and quantising it is free.**
+`--spec-draft-type-k` / `--spec-draft-type-v` set the *draft* cache's type and
+`engine.start` passes neither, so it runs at the default while the main cache is
+q8_0. Setting both to `q8_0` on the dense 27B, Vulkan:
+
+- **2.45 KiB/token back** (40.18 -> 37.73 resident), about half the MTP term and
+  ~412 MiB at a 168k window
+- **the ceiling moves 200704 -> 208896** (dies at 204800 and 212992
+  respectively), so 4k-12k more tokens
+- **no speed cost**: 43.7 -> 44.1 tok/s at ~4k and 32.3 -> 33.3 at ~62k
+- **no acceptance cost**: 65% -> 66% and 64% -> 71%
+
+Read that acceptance column as "no penalty", not as a gain -- 7 points is inside
+what content alone swings on this instrument. It cannot change output either
+way, because every draft is verified regardless of the cache it was drafted
+from. This is a win on the **shipped Vulkan** engine, unrelated to CUDA.
+
+**Calibrate KV after deciding this, not before**: the MTP term halves if it
+changes, so a per-model resident figure measured first is immediately stale.
 
 `LLAMA_CURL=OFF` costs nothing: llama.cpp's `-hf` fetcher is unused here.
 

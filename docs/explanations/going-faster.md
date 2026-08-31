@@ -686,12 +686,54 @@ a quantity measured once, generalised before anything else was measured against
 it.
 :::
 
-The draft cache also has *its own* flags — `--spec-draft-type-k` and
-`--spec-draft-type-v` — which `engine.start` does not set, so it runs at the
-default while the main cache is `q8_0`. Quantising it should recover much of the
-MTP term, and cannot change output: a coarser draft is only a draft, and every
-one is still verified. **That is unmeasured**, and it is a lever on the shipped
-Vulkan engine rather than a CUDA question.
+### The draft cache is not quantised, and quantising it is free
+
+The draft context has *its own* cache flags — `--spec-draft-type-k` and
+`--spec-draft-type-v` — and `engine.start` sets neither, so MTP's cache runs at
+the default while the main one is `q8_0`. That is the whole of the MTP term:
+setting them halves it.
+
+| dense 27B, Vulkan, MTP on | resident KiB/token |
+|---|---|
+| draft cache at its default | 40.18 |
+| draft cache `q8_0` | **37.73** |
+
+**2.45 KiB/token back, against an MTP term of 4.80** — almost exactly half,
+which is what a cache going from f16 to 8 bits should give and is the evidence
+for what the default actually was. At a 168k window that is about **412 MiB**.
+
+The obvious worry is that coarser drafts are worse drafts. They are not worse
+*output* — every draft is verified, so this cannot change what the model says,
+only how often a draft survives. Measured either side, 7 samples each:
+
+| | default | `q8_0` | |
+|---|---|---|---|
+| ~4k prompt | 43.7 tok/s, 65% | 44.1, 66% | 1.007× |
+| ~62k prompt | 32.3 tok/s, 64% | **33.3, 71%** | **1.031×** |
+
+So it costs nothing and is fractionally faster. **Read the acceptance column as
+"no penalty" rather than as a gain**: 64% → 71% is a seven-point move, and
+acceptance on this instrument swings by more than that on content alone — the
+depth table above spans 61–84% on one unchanged config. What the measurement
+supports is that quantising the draft cache does not degrade drafting; the
+apparent improvement is not established.
+
+The window moves with it, which is the part a user would notice. Loading until
+it dies, Vulkan, MTP on:
+
+| draft cache | loads at | dies at |
+|---|---|---|
+| default | 200704 | 204800 |
+| `q8_0` | **208896** | 212992 |
+
+**Between 4k and 12k more tokens**, for a flag. Not enough to change what the
+planner offers — this model is capped at 168k by the desktop reserve long before
+the ceiling — but it is margin, and margin is exactly what
+[CUDA spends](#what-cuda-costs-in-context).
+
+This is a lever on the **shipped Vulkan engine** and has nothing to do with
+CUDA. It is also a caution for any per-model KV calibration: the MTP term is
+about to halve if this changes, so calibrate after deciding, not before.
 
 ### What it costs to have
 
