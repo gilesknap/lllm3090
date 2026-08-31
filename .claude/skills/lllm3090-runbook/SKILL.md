@@ -94,31 +94,43 @@ from the catalogue: llama.cpp *refuses to start* with that flag against a
 checkpoint lacking the head, and a metadata key is not proof -- a conversion can
 announce `nextn_predict_layers` and ship no tensors. It gets *better* on
 copy-heavy work, not worse: reproducing a 369-line file with one identifier
-renamed, Qwen3.8-27B ran **32.2 -> 59.5** tok/s (**1.85x**) at **100%** draft
+renamed, Qwen3.8-27B ran **32.8 -> 59.7** tok/s (**1.82x**) at **100%** draft
 acceptance, because the next token is trivially predictable when the output is
-copying a known input.
+copying a known input. MTP's figures are also the ones the Vulkan bug below did
+*not* touch -- they are unchanged across the fix.
 
 **ngram is a regression, and stacking it with MTP is worse than MTP alone.**
-Measured on Qwen3.8-27B: `ngram-cache` alone 0.88x, `draft-mtp,ngram-cache`
-1.42x, `draft-mtp` alone 1.62x. So the stack does beat ngram by itself -- it
-just costs you a fifth of what MTP was already giving. Hit rates on novel generation are low, so you pay
+Measured on Qwen3.8-27B on b10715, on general prose: `ngram-cache` alone
+**0.65x**, `draft-mtp,ngram-cache` 1.35x, `draft-mtp` alone 1.61x. So the stack
+does beat ngram by itself -- it just costs you a sixth of what MTP was already
+giving. Hit rates on novel generation are low, so you pay
 for rejected drafts and the weak drafts displace good ones. The advice online
 that advanced users should combine them is wrong on this box.
 
-**It does not flip on long copy-heavy prompts either -- that was tested.** The
-obvious objection to the numbers above is that they were taken on a seven-line
-edit, which is not the regime prompt-lookup drafting is built for. Re-measured
-on Qwen3.8-27B against a 369-line file copied back with one identifier renamed,
-7 samples per cell: `ngram-cache` **0.92x**, `draft-mtp,ngram-cache` 1.60x,
-`draft-mtp` alone **1.85x**. The mechanism behaved exactly as the objection
-predicted and the throughput still did not follow -- acceptance climbed from
-**0%** on the seven-line edit to **62%** on the long copy, and 62% is still
-below what it costs to draft. Adding ngram to MTP *lowered* acceptance from 100%
-to 85%, which is the weak-drafts-displace-good-ones effect made visible. Two
-caveats worth keeping: ngram's spread was wide ([29.0 .. 34.5] against a tight
-baseline [31.8 .. 32.8]), so individual runs did clear baseline while the median
-did not; and this says nothing about a checkpoint with no MTP head, where the
-comparison is ngram against nothing rather than ngram against a better drafter.
+**It does not flip on long copy-heavy prompts either -- that was tested,
+twice.** The obvious objection to the numbers above is that they were taken on a
+seven-line edit, which is not the regime prompt-lookup drafting is built for.
+Re-measured on Qwen3.8-27B against a 369-line file copied back with one
+identifier renamed, 7 samples per cell, on **b10715**: `ngram-cache` **0.88x**,
+`draft-mtp,ngram-cache` 1.61x, `draft-mtp` alone **1.82x**. The objection was
+sound and did not rescue it -- acceptance climbs from **0%** on the seven-line
+edit to **58%** on the long copy, and 58% is still below what it costs to draft.
+Copy-heavy work is where prompt-lookup does least badly here (0.88x, against
+0.65x on prose), not where it wins. Adding ngram to MTP *lowered* acceptance
+from 100% to 87%, which is the weak-drafts-displace-good-ones effect made
+visible.
+
+**Measure speculation on a build newer than the pinned one.** The first attempt
+at the above was run on the installed engine and had to be thrown away.
+`cli.LLAMA_BUILD` pins **b10628** (25 August); llama.cpp
+[PR #27812](https://github.com/ggml-org/llama.cpp/pull/27812) merged on the
+28th, 49 commits later, fixing a Vulkan graph optimiser that reordered nodes
+across aliased tensor views so the target accepted draft tokens it had not
+chosen -- wrong output at temperature 0, and *invalid acceptance numbers*. The
+bug **flattered** ngram rather than handicapping it: the same sweep read 0.87x
+at 47% acceptance before the fix and 0.65x at 24% after. CUDA was never
+affected, and this build ships only `libggml-vulkan.so`. Point
+`SWEEP_LLAMA_DIR` at a newer build until the pin moves.
 
 **A drafter costs VRAM, which is the resource the catalogue defends.** DFlash
 and EAGLE-3 need a separate resident model, so they buy speed with context.
