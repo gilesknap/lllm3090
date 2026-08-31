@@ -5,12 +5,19 @@ The dense 27B is the slowest model in the catalogue, and
 token. That is not the whole story: multi-token prediction has already taken it
 from 34.9 to 56.6 tok/s, and several further levers have been looked at. This
 page records all of them — what is already in the engine, what was measured and
-set aside, what is waiting on a build, and what is parked and why.
+set aside, what it would cost to have, and what is parked and why.
 
-Two of them have since been measured and neither displaced MTP, so the short
-version is that the engine's defaults are already the best combination tried on
-this card. The value in what follows is mostly in why, and in the one variable —
-draft width — that turned out to matter more than the choice of drafter.
+If you want the levers themselves explained rather than scored, start with
+[](what-makes-it-fast.md); this page assumes them and reports numbers.
+
+The short version: **nothing has displaced multi-token prediction**, so the
+engine's defaults are the best combination tried on this card. Two drafters were
+measured and rejected. CUDA was built and is genuinely faster — 1.3× on prefill,
+1.28× on decode — but for a toolkit, a compiler and a binary tied to one card,
+and it is not the 3–4× this page used to claim. The useful findings are mostly
+in *why*, and in one variable, draft width, that turned out to matter more than
+the choice of drafter and to be a property of the backend rather than of any
+drafter at all.
 
 ## Two clocks, not one
 
@@ -159,46 +166,90 @@ same shape on AMD and Intel above width 8, explicitly not on CUDA. These numbers
 are below that threshold and on NVIDIA, so the effect is wider than the issue
 describes.
 
-## CUDA instead of Vulkan
+## CUDA instead of Vulkan: 1.3×, not 3–4×
 
-The prefill lever, and the one with the largest recorded gap. Community
-scoreboards put CUDA about 36% ahead of Vulkan on prompt processing; this
-project's own measurements put Vulkan 3–4× behind. The 3090 entries in
-llama.cpp's CUDA scoreboard sit at pp512 ≈ 5560 with flash attention.
+Built and measured. Both engines from llama.cpp commit `662a0b0` — the same
+commit as the pinned Vulkan build, so this is a backend comparison and nothing
+else — with CUDA 13.3 compiled for `sm_86` alone, derived from the card rather
+than typed.
 
-[Why this is scoped to one GPU](one-gpu.md) records the reason for Vulkan:
-prebuilt CUDA binaries for Linux do not exist, and building needs a toolchain
-the distribution did not ship. Half of that is still true and half has expired:
+**Real cold prefill**, dense 27B, empty cache, `cache_prompt=false`:
 
-- **Still true.** As of b10715 llama.cpp publishes CUDA archives for Windows
-  only. Linux gets CPU, Vulkan, ROCm, SYCL and OpenVINO. There is no download.
-- **No longer true.** CUDA 13.3 lists Ubuntu 26.04 LTS as a supported
-  distribution and GCC 6.x–15.x as supported host compilers. The reference
-  machine runs Ubuntu 26.04 with GCC 15.2. The compiler objection has lapsed,
-  and building from source is the ordinary route on Linux — it is the only route
-  llama.cpp's own build documentation describes.
+| prompt | Vulkan | CUDA | |
+|---|---|---|---|
+| 10k tokens | 10.5 s | 8.1 s | 1.30× |
+| 40k tokens | 48.5 s | 37.1 s | 1.31× |
+| 80k tokens | **118.2 s** | **90.0 s** | 1.31× |
 
-One prediction worth writing down before it is tested, because it is falsifiable
-and cheap to check once a CUDA build exists: **every drafter verdict above may
-change, and the wide-draft ones should change most.** Verifying k drafted tokens
-is a batched forward pass — the same work prefill does — and prefill is
-precisely where Vulkan is 3–4× behind here.
+**`llama-bench`**, same models and flags:
 
-That is no longer only an argument. Widening the draft from 3 to 7 costs both
-drafters throughput *and* acceptance on this backend, which is the signature of
-verification being expensive rather than of drafts being poor, and issue #27544
-reports the same shape on AMD and Intel but explicitly not on CUDA. If the
-penalty is the backend's, a CUDA build should flatten it — which would make
-wider drafts affordable, and would give prompt-lookup, whose whole method is
-drafting long runs, its only plausible route back. Nothing has been measured on
-CUDA to support this.
+| | Vulkan | CUDA | |
+|---|---|---|---|
+| pp512 | 1026.9 | 1217.4 | 1.19× |
+| pp4096 | 1014.0 | 1343.8 | 1.33× |
+| tg64 | 32.9 | 42.2 | **1.28×** |
 
-So the obstacle is no longer *can it build* but *what the project promises*.
-`install-engine` currently downloads a tarball and is done; a CUDA path means
-either a multi-gigabyte toolkit and a local compile on every install, or
-shipping binaries built here — a different project with a different support
-burden. Worth measuring the gain before deciding, since the gain is the whole
-argument.
+### The 3–4× claim was wrong
+
+This page and `installation.md` both said Vulkan prefill was 3–4× behind CUDA,
+and both were repeating a figure nobody here had measured. It is **1.3×**.
+
+What was right is the number that made it plausible: 80k really does take about
+two minutes. But that is mostly what this card costs to prefill 27B dense, not a
+tax the backend is charging. CUDA takes two minutes down to a minute and a half.
+It does not take it to thirty seconds, and no backend change will — the fix for
+a slow first turn is to send a shorter prompt or to keep the cache warm.
+
+### Decode was the surprise
+
+Community scoreboards put CUDA about 10% ahead on generation. Here it is **28%**
+— 32.9 to 42.2 tok/s before any speculation. That is the larger of the two
+effects in practice, because decode is what a conversation spends its time
+doing, and it compounds with multi-token prediction rather than competing with
+it: 42.2 with MTP's measured 1.6× on top would be around 67 tok/s, against the
+53 the Vulkan engine delivers today.
+
+### And Vulkan does not batch
+
+The single most useful line in those tables is Vulkan going **1026.9 → 1014.0**
+from pp512 to pp4096 while CUDA goes 1217.4 → 1343.8. Vulkan gets *nothing* from
+a wider batch. CUDA gets 10%.
+
+That is the mechanism behind the draft-width finding above:
+verifying k drafted tokens is a batched forward pass, so a backend that does not
+reward wider batches will punish wider drafts. It also means every drafter
+verdict on this page was measured on the backend least able to make drafting pay,
+and none of them should be treated as settled for CUDA — including the two that
+were rejected.
+
+### What it costs to have
+
+- **A 4–6 GB toolkit and a local compile.** As of b10715 llama.cpp publishes
+  CUDA archives for Windows only; Linux gets CPU, Vulkan, ROCm, SYCL and
+  OpenVINO. There is no download.
+- **Ubuntu's own CUDA is too old to build this.** 26.04 ships 13.1 in
+  multiverse, which declares `rsqrt`/`rsqrtf` without an exception specifier
+  while glibc 2.43 declares them `noexcept(true)`; `nvcc` then refuses anything
+  including `<math.h>`. CUDA 13.3 tests for glibc ≥ 2.42 and matches it. The
+  toolkit has to come from NVIDIA's `ubuntu2604` repository, not the
+  distribution.
+- **A binary tied to one card.** Compiled for `sm_86-real`, it will not run on a
+  different architecture at all. The directory is named `b10715-cuda-sm86` so
+  that is visible rather than implied.
+- **About 700 MiB of context.** CUDA reports 24125 MiB of VRAM where Vulkan
+  reports 24822. `catalog.fit` computes against a fixed envelope and does not
+  know which backend it is planning for, so a CUDA engine would need that
+  envelope to become backend-dependent — or it would promise a window it cannot
+  hold.
+- **A weaker identity.** A downloaded build is a tag and a digest. A compiled one
+  reports `build 1, commit 662a0b0`, because a shallow clone has no tag history:
+  only the commit is real, and nobody attests to the binary. See "What a build has to
+  prove", below.
+
+So the question is no longer whether CUDA is faster — it is — but whether 1.3×
+is worth asking every user for a toolkit, a compiler and a per-card binary, in a
+project whose install is currently one verified download. That is a decision
+about what this project promises, and the measurement does not make it.
 
 ## Still unanswered: coopmat2
 

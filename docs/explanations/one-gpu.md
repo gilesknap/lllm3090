@@ -11,7 +11,8 @@ Everything this project offers is a claim about a specific card:
 - **"About 35 tokens per second"** — 936 GB/s divided by bytes read per token,
   or measured directly on this card.
 - **"Use the Vulkan build"** — because prebuilt CUDA binaries for Linux do not
-  exist and building them needs a compiler recent Debian no longer ships.
+  exist, and the alternative is a 4–6 GB toolkit and a local compile for a
+  measured 1.3×.
 
 On a 16 GB card every "fits" is wrong. On a 5090 every speed is wrong and the
 context figures are needlessly pessimistic. On an AMD card the engine binary is

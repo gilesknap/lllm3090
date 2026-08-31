@@ -78,13 +78,21 @@ SSH tunnel — see [](../how-to/remote-access.md).
 
 ## Why Vulkan and not CUDA
 
-llama.cpp publishes prebuilt CUDA binaries for Windows only. Building the CUDA
-backend on Linux needs a host compiler CUDA accepts (GCC ≤ 14), which recent
-Debian and Ubuntu releases no longer default to. The prebuilt **Vulkan** binary
-needs no compiler, works on any NVIDIA driver with the Vulkan ICD installed, and
-decodes at close to CUDA speed.
+llama.cpp publishes prebuilt CUDA binaries for Windows only, so on Linux CUDA
+means installing a 4–6 GB toolkit and compiling. The prebuilt **Vulkan** binary
+needs neither, and works on any NVIDIA driver with the Vulkan ICD installed.
 
-The trade-off is prompt processing: Vulkan prefill is roughly 3–4× slower than
-CUDA. That shows up as a slow *first* turn on a very long prompt (about two
-minutes at 80k tokens) and not at all afterwards, because the prefix cache
-carries the prompt between turns.
+CUDA is faster, and by a consistent amount rather than the large one this page
+used to claim. Measured here on an RTX 3090, both builds from the same llama.cpp
+commit:
+
+| | Vulkan | CUDA | |
+|---|---|---|---|
+| cold prefill, 80k tokens | 118.2 s | 90.0 s | 1.31× |
+| decode, no speculation | 32.9 tok/s | 42.2 tok/s | 1.28× |
+
+So the first turn on a very long prompt is slow either way — about two minutes
+at 80k against a minute and a half — and not slow at all afterwards, because the
+prefix cache carries the prompt between turns. Vulkan costs you roughly a
+quarter of the speed for none of the setup. See
+[](../explanations/going-faster.md) for what that trade is made of.
