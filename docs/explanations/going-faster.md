@@ -30,8 +30,10 @@ Not levers to pull, but the baseline everything else is measured against — see
   `--spec-type draft-mtp` is added on evidence rather than on a catalogue claim:
   `lllm3090.gguf.has_mtp` reads the tensor names out of the file, because
   llama.cpp refuses to start with that flag against a checkpoint lacking the
-  head. Measured on this card: **34.9 → 56.6 tok/s (1.62×)** on the dense 27B,
-  130.5 → 171.8 (1.32×) on the sparse 35B.
+  head. Measured on this card, on the pinned build: **34.9 → 56.6 tok/s
+  (1.62×)** on the dense 27B, 130.5 → 171.8 (1.32×) on the sparse 35B. The
+  table in the next section re-measures the dense model on a newer engine and
+  lands in the same place.
 - **All layers on the GPU** (`--n-gpu-layers 999`). Nothing in the catalogue is
   allowed to need offload; a model that does not fit is not offered.
 - **Flash attention on** (`-fa on`), not left at `auto`.
@@ -49,26 +51,44 @@ model. That figure is a floor now, not a prediction.
 
 ## Measured and set aside: prompt-lookup drafting
 
-MTP is one of several modes behind llama.cpp's `--spec-type`. The others were
-swept on the sparse 35B, and `ngram-cache` measured **0.88×** — a slowdown —
-both alone and combined with MTP.
+MTP is one of several modes behind llama.cpp's `--spec-type`. `ngram-cache` was
+swept against it on the dense 27B twice — once on a build that turned out to be
+broken, and again on **b10715**, which contains the fix. It loses on every
+workload tried.
 
-Two caveats keep that from being a verdict:
+| | prose | code-edit | long-copy |
+|---|---|---|---|
+| baseline | 34.1 | 33.8 | 32.8 |
+| `draft-mtp` | 54.8 (1.61×) | 55.7 (1.65×) | **59.7 (1.82×)** |
+| `ngram-cache` | 22.2 (0.65×) | 26.2 (0.78×) | 28.9 (0.88×) |
+| `draft-mtp,ngram-cache` | 46.2 (1.35×) | 50.0 (1.48×) | 52.7 (1.61×) |
 
-1. **The workload could not show a gain.** n-gram drafting drafts from n-grams
-   already in the context, so it can only pay when the output repeats a long
-   stretch of the input. It was measured on a seven-line edit. The sweep now
-   carries a `long-copy` prompt — a few hundred lines copied back with one
-   identifier changed — which is the regime it is built for.
-2. **The build was broken.** Vulkan's graph optimiser reordered nodes across
-   aliased tensor views, so the target model accepted draft tokens it had not
-   chosen: wrong output at temperature 0, and — the part that matters here —
-   *invalid acceptance numbers*. Fixed in
-   [PR #27812](https://github.com/ggml-org/llama.cpp/pull/27812), merged
-   28 August 2026, after the build those measurements were taken on. CUDA was
-   never affected.
+Both objections that kept the earlier result from being a verdict have now been
+answered, and neither rescued it:
 
-Both need re-running before anything is concluded.
+1. **The workload was wrong, and fixing it was not enough.** n-gram drafting can
+   only pay when the output repeats a long stretch of the input, and the first
+   measurement used a seven-line edit. The `long-copy` prompt — 369 lines copied
+   back with one identifier renamed — lifts acceptance from **0%** to **58%**,
+   so the objection was sound. It is still 0.88×. Copy-heavy work is where
+   prompt-lookup does least badly here, not where it wins.
+2. **The build was broken, and it had been flattering ngram.** The natural
+   assumption was that a bug producing invalid acceptance numbers was costing
+   ngram a fair hearing. It was doing the opposite: on the pre-fix build prose
+   read 0.87× at 47% acceptance, and on b10715 the same sweep reads **0.65× at
+   24%**. The target had been accepting drafts it never chose. **MTP's numbers
+   did not move** (1.62× → 1.61×), because its drafts are short and mostly
+   right, so there were few spurious accepts to lose.
+
+Stacking remains worse than MTP alone, and the acceptance column says why:
+adding ngram to MTP takes long-copy from 100% acceptance down to 87%. The weak
+drafts displace good ones rather than adding to them.
+
+**The pinned build still predates the fix.** `cli.LLAMA_BUILD` is `b10628`
+(25 August); [PR #27812](https://github.com/ggml-org/llama.cpp/pull/27812)
+merged on the 28th. Anything measured on the installed engine reproduces the
+invalid acceptance numbers, so a sweep that matters needs `SWEEP_LLAMA_DIR`
+pointed at a newer build until the pin moves.
 
 ## The live candidate: DFlash2
 
@@ -136,6 +156,17 @@ the distribution did not ship. Half of that is still true and half has expired:
   machine runs Ubuntu 26.04 with GCC 15.2. The compiler objection has lapsed,
   and building from source is the ordinary route on Linux — it is the only route
   llama.cpp's own build documentation describes.
+
+One prediction worth writing down before it is tested, because it is falsifiable
+and cheap to check once a CUDA build exists: **the drafter verdicts above may
+not survive the backend change, and ngram's should move furthest.** Verifying k
+drafted tokens is a batched forward pass — the same work prefill does — and
+prefill is precisely where Vulkan is 3–4× behind here. Prompt-lookup drafts long
+runs where MTP drafts one or two, so it is the config most exposed to weak
+batched compute, and its break-even acceptance should fall further than MTP's.
+Issue #27544, where speculation collapses on Vulkan above a draft width of 8 but
+not on CUDA, points the same way. Nothing has been measured on CUDA to support
+this.
 
 So the obstacle is no longer *can it build* but *what the project promises*.
 `install-engine` currently downloads a tarball and is done; a CUDA path means
