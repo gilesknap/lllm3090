@@ -119,19 +119,30 @@ one afternoon here, and that is now the whole budget.
 
 Two costs, not one: ~230 MiB more fixed overhead (the 24125-vs-24822 MiB of
 reported capacity), and **~11% more per token of KV**, which compounds with
-depth. Resident KiB/token against a nominal 32:
+depth. Resident KiB/token as a multiple of each model's nominal q8 figure:
 
-| | no MTP | MTP on |
-|---|---|---|
-| Vulkan | 35.00 (1.094x) | 39.80 (1.244x) |
-| CUDA | 39.00 (1.219x) | 43.77 (1.368x) |
+| | Vulkan, no MTP | Vulkan, MTP | CUDA, no MTP | CUDA, MTP |
+|---|---|---|---|---|
+| Qwen3.8-27B (nominal 32) | **1.094x** | 1.244x | 1.219x | 1.368x |
+| Qwen3.6-35B-A3B-MTP (10) | **1.216x** | 1.462x | 1.363x | **1.660x** |
 
-`config.KV_OVERHEAD_FACTOR` is 1.12, calibrated on Gemma-4-26B-A4B -- Vulkan, no
-MTP head -- which is the top-left cell. It is incomplete rather than wrong.
-**MTP's draft context is a second KV cache costing ~4.8 KiB/token** (4.77 CUDA,
-4.80 Vulkan -- so it is the cache's cost, not the backend's). Never collapse
-these into one backend constant: 1.244/1.368 carry MTP inside them, and applying
-them to a model with no MTP head plans it ~14% short.
+**`config.KV_OVERHEAD_FACTOR` is 1.12 and no single number can be right.** It
+was calibrated on Gemma-4-26B-A4B (Vulkan, no MTP head) and sits *between* the
+two models' base factors, wrong for both in opposite directions. Three lessons:
+
+- **The base factor is model-dependent**, 1.094 vs 1.216 with no speculation on
+  the shipped backend.
+- **MTP's draft context is a second KV cache, and its cost does not
+  extrapolate** -- +4.80 KiB/token on the 27B, +2.46 on the A3B; 15.0% vs 24.6%
+  of nominal. Neither absolute nor proportional. Measure it per model.
+- **Only the backend multiplier generalises**: 1.100-1.136x across both models
+  and both settings. Treat that as a constant and nothing else here.
+
+**Unmeasured lever:** `--spec-draft-type-k` / `--spec-draft-type-v` set the
+*draft* cache's type and `engine.start` does not pass them, so MTP's cache runs
+at the default while the main one is q8_0. Quantising it should recover much of
+the MTP term on the **shipped** engine. It cannot change output -- drafts are
+verified regardless -- so the only risk is acceptance, which is measurable.
 
 `LLAMA_CURL=OFF` costs nothing: llama.cpp's `-hf` fetcher is unused here.
 

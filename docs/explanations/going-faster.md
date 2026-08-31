@@ -646,31 +646,52 @@ planner believes it has is gone. The desktop's own VRAM use was observed moving
 about 100 MiB in an afternoon, and that is now the whole budget.
 
 The mechanism is `config.KV_OVERHEAD_FACTOR`, one constant of `1.12` calibrated
-on Gemma-4-26B-A4B — a Vulkan engine running a model with no MTP head. Measured
-against this model's nominal 32 KiB/token, all four combinations:
+on Gemma-4-26B-A4B — a Vulkan engine running a model with no MTP head. Resident
+KiB/token measured against each model's nominal q8 figure, two models, both
+backends, MTP on and off:
 
-| resident KiB/token | no MTP | MTP on |
-|---|---|---|
-| Vulkan | 35.00 (**1.094×**) | 39.80 (1.244×) |
-| CUDA | 39.00 (1.219×) | 43.77 (**1.368×**) |
+| | nominal | Vulkan, no MTP | Vulkan, MTP | CUDA, no MTP | CUDA, MTP |
+|---|---|---|---|---|---|
+| Qwen3.8-27B | 32 | 35.00 (**1.094×**) | 39.80 (1.244×) | 39.00 (1.219×) | 43.77 (1.368×) |
+| Qwen3.6-35B-A3B-MTP | 10 | 12.15 (**1.216×**) | 14.62 (1.462×) | 13.63 (1.363×) | 16.60 (**1.660×**) |
 
-**The constant is not wrong, it is incomplete**: it is very nearly the top-left
-cell, the one case it was measured on. Three separable things fill in the rest.
+**One constant cannot express that**, and the reason is worth stating precisely
+because the obvious repair does not work either.
 
-- **MTP's draft context costs ~4.8 KiB/token of KV of its own** — 4.77 on CUDA
-  against 4.80 on Vulkan. That near-identity is the evidence it belongs to the
-  second cache rather than to the backend, so it is an additive term, not a
-  multiplier.
-- **CUDA costs ~1.11× per token of KV**, steady whether MTP is on (1.100×) or
-  off (1.114×).
-- **CUDA carries ~230 MiB more fixed overhead**, 228 with MTP and 233 without.
+- **The base factor is model-dependent.** With no speculation at all and on the
+  shipped backend, the two models want **1.094 and 1.216**. The global `1.12`
+  lies between them, and is wrong for both in opposite directions.
+- **MTP's draft cache is a second KV cache**, and its cost is **neither absolute
+  nor a fixed share**. It adds 4.80 KiB/token to the dense 27B and 2.46 to the
+  A3B — so not absolute; that is 15.0% against 24.6% of nominal — so not
+  proportional either.
+- **Only the backend multiplier generalises.** CUDA costs **1.100–1.136×** per
+  token of KV across both models and both speculation settings, alongside a
+  fixed ~230 MiB. That one is safe to treat as a constant.
 
 So `fit` under-counts KV on both backends today, and the driver and workspace
-reserves absorb it — on Vulkan. That is a backend-blind planner rather than a
-CUDA bug, and it is why a second backend cannot simply be dropped in beside the
-first. It is also why the two right-hand cells must not be read as backend
-constants: they carry MTP's cost inside them, and a model with no MTP head does
-not pay it.
+reserves absorb it — on Vulkan. That is a planner blind to *two* variables it
+should know about rather than a CUDA bug. The practical consequence is that
+resident KV has to be calibrated per model, the way every `verified: true` speed
+in the catalogue is: a single nominal-times-a-constant is the wrong shape, and
+the right-hand columns above must never be lifted as backend constants, because
+they carry a model and an MTP head inside them.
+
+:::{note}
+An earlier revision of this page derived a tidy three-term model — base,
+backend, plus a fixed ~4.8 KiB/token for MTP — from the dense 27B alone. The
+second model broke two of those three terms. It is recorded here rather than
+quietly rewritten because it is the same mistake this page catalogues elsewhere:
+a quantity measured once, generalised before anything else was measured against
+it.
+:::
+
+The draft cache also has *its own* flags — `--spec-draft-type-k` and
+`--spec-draft-type-v` — which `engine.start` does not set, so it runs at the
+default while the main cache is `q8_0`. Quantising it should recover much of the
+MTP term, and cannot change output: a coarser draft is only a draft, and every
+one is still verified. **That is unmeasured**, and it is a lever on the shipped
+Vulkan engine rather than a CUDA question.
 
 ### What it costs to have
 
