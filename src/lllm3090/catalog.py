@@ -205,36 +205,74 @@ def plan(
     if requested is not None:
         # An explicit --parallel is an instruction, not a hint: divide the pool
         # as asked, even where that leaves each slot short of the ceiling.
+        #
+        # Except where the pool cannot seat the request at all. Rounding a
+        # slot's share up to one page to keep it non-zero is what makes that
+        # dangerous: ask for more slots than there are pages and every slot
+        # gets a page anyway, so the plan's pool exceeds the cache that exists
+        # and the engine starts, allocates, and dies of VRAM exhaustion. A
+        # refusal here is the same refusal, before anything is launched.
+        if f.pool_q8 // requested < 1024:
+            raise ValueError(
+                f"{requested} slots do not fit: {model.name} leaves "
+                f"{f.pool_q8} tokens of cache on this card, which is under "
+                f"one 1024-token page each. The most it can seat is "
+                f"{max(1, f.pool_q8 // 1024)}."
+            )
         share = f.pool_q8 // requested
         if share >= model.max_ctx:
             return Plan(
                 model.max_ctx * requested, requested, model.max_ctx, "rope"
             )
-        share = max(1024, (share // 1024) * 1024)
+        share = (share // 1024) * 1024
         return Plan(share * requested, requested, share, "vram")
 
-    # Automatically: fill one conversation to the model's ceiling before
-    # opening a second.
+    # Automatically: fill one conversation to the model's ceiling, and split
+    # only when refusing to would strand too much of the card.
     #
-    # The pool is a fixed number of tokens, so splitting it in two does not
-    # create capacity -- it halves the window and buys concurrency with it.
-    # That trade is only free in one case: when the architecture runs out
-    # before the card does, and the cache past ``max_ctx`` cannot become a
-    # longer conversation no matter what. Then, and only then, extra slots cost
-    # nothing, because each still gets the whole window.
+    # The pool is a fixed number of tokens, so splitting it does not create
+    # capacity -- it shortens each conversation and buys concurrency with the
+    # difference. One long conversation is therefore the default. But the
+    # window is bounded by RoPE as well as by VRAM, and past that ceiling the
+    # remaining cache can never become a longer conversation: a pool holding
+    # 2.8 windows would give one full window and strand 1.8 windows of cache.
     #
-    # So slots are granted in whole windows. A slot that would get less than
-    # ``max_ctx`` is not granted: it would shorten the conversation you have to
-    # make room for one you may not want. Two half-windows are not worth more
-    # than one whole one -- see ``config.AGENT_PROMPT_FLOOR`` for how quickly a
-    # halved window stops being usable at all.
-    whole_windows = min(f.pool_q8 // model.max_ctx, config.MAX_AUTO_PARALLEL)
-    if whole_windows >= 2:
-        return Plan(
-            model.max_ctx * whole_windows, whole_windows, model.max_ctx, "rope"
-        )
-    share = max(1024, (min(f.pool_q8, model.max_ctx) // 1024) * 1024)
-    return Plan(share, 1, share, "rope" if share >= model.max_ctx else "vram")
+    # So the test is on *total* usable context. If splitting raises it by
+    # ``SLOT_SPLIT_GAIN`` or more, split; otherwise keep the single window and
+    # accept the remainder as unusable. Both halves of that matter -- the first
+    # stops a large surplus going to waste, the second stops a small one from
+    # halving a conversation to reclaim it.
+    def window(slots: int) -> int:
+        """Per-conversation window at this slot count, in whole pages."""
+        return max(1024, (min(model.max_ctx, f.pool_q8 // slots) // 1024) * 1024)
+
+    alone = window(1)
+    slots = 1
+    if f.pool_q8 >= config.SLOT_SPLIT_GAIN * alone:
+        # Worth splitting. How far is a second question, and answering it with
+        # "as far as consumes the whole pool" is wrong: it produces a cliff at
+        # the threshold where a *larger* pool yields a *shorter* conversation.
+        # Qwen3.6-35B-A3B was the case -- 256k on a desktop and 184k headless,
+        # so freeing the compositor's VRAM made the window worse. See
+        # ``test_headless_never_offers_less_than_a_desktop``.
+        #
+        # So take each further slot only while it recovers more cache than it
+        # costs window, proportionally. Muse-Glimmer's third slot recovers 28%
+        # of a stranded pool for 8% of its window and is taken; the A3B's third
+        # recovers 7% for 28% and is not.
+        slots = 2
+        while slots < config.MAX_AUTO_PARALLEL:
+            here, further = window(slots), window(slots + 1)
+            if further <= 1024:
+                break
+            gained = ((slots + 1) * further) / (slots * here)
+            lost = here / further
+            if gained <= lost:
+                break
+            slots += 1
+    share = window(slots)
+    capped = "rope" if share >= model.max_ctx else "vram"
+    return Plan(share * slots, slots, share, capped)
 
 
 def _pages_up(tokens: int) -> int:

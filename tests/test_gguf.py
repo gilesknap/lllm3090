@@ -116,3 +116,30 @@ def test_the_header_read_does_not_depend_on_the_weights(tmp_path):
     f.write_bytes(build(["blk.40.nextn.enorm.weight"]))
     assert f.stat().st_size < 4096
     assert gguf.has_mtp(f) is True
+
+
+@pytest.mark.parametrize("length", [2**63, 2**64 - 1, 10**9])
+def test_a_length_the_file_cannot_back_is_a_parse_error_not_a_crash(tmp_path, length):
+    """Every length here is read *from* the file, so it is attacker-controlled.
+
+    Handing one near 2**64 to ``read()`` raises ``OverflowError`` or exhausts
+    memory rather than failing as a parse error -- and the caller is
+    ``engine.start``, which must do neither. It has to come back as "no MTP".
+    """
+    body = (b"GGUF" + struct.pack("<I", 3) + struct.pack("<Q", 1)
+            + struct.pack("<Q", 0) + struct.pack("<Q", length) + b"short")
+    f = tmp_path / "huge.gguf"
+    f.write_bytes(body)
+    with pytest.raises(gguf.Malformed):
+        gguf.header(f)
+    assert gguf.has_mtp(f) is False
+
+
+def test_an_oversized_array_count_is_refused(tmp_path):
+    """The same, for the element count of a fixed-width array."""
+    body = (b"GGUF" + struct.pack("<I", 3) + struct.pack("<Q", 0)
+            + struct.pack("<Q", 1) + _s("k") + struct.pack("<I", gguf.ARRAY)
+            + struct.pack("<I", gguf.U32) + struct.pack("<Q", 2**62))
+    f = tmp_path / "arr.gguf"
+    f.write_bytes(body)
+    assert gguf.has_mtp(f) is False

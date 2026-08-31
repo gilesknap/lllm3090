@@ -13,21 +13,31 @@ lllm3090 start Qwen3.8-27B --parallel 4    # four conversations, quarter each
 lllm3090 start Qwen3.8-27B --ctx 131072    # set the whole pool by hand
 ```
 
-## The automatic rule: fill the window, then add free slots
+## The automatic rule: fill the window, then split only if it pays
 
-The pool is a fixed number of tokens, so splitting it in two does not create
-capacity — it halves the conversation and buys concurrency with the difference.
-That trade is only free in one case: when the **architecture** runs out before
-the card does, and the cache past the model's RoPE ceiling could not have become
-a longer conversation anyway.
+The pool is a fixed number of tokens, so splitting it does not create capacity
+— it shortens every conversation and buys concurrency with the difference. One
+long conversation is therefore the default.
 
-So slots are granted in **whole windows**. A slot that would get less than the
-ceiling is not granted, because it would shorten the conversation you have to
-make room for one you may not have wanted.
+But the window is bounded by the model's **RoPE ceiling** as well as by VRAM,
+and past that ceiling the remaining cache can never become a longer
+conversation. Refusing to split then strands it: a pool holding 2.8 windows
+would give you one full window and waste 1.8 windows of cache.
 
-This changed in 0.7.0. The default used to be two slots always, which cost
-`Qwen3.6-35B-A3B` 87k of window on a desktop to reserve a second conversation
-nobody had asked for.
+So the test is on **total** usable context. If splitting raises it by
+`SLOT_SPLIT_GAIN` (**1.5x**, in `config.py`) or more, split;
+otherwise keep the single window and accept the remainder as unusable.
+
+How far to split is a second question, and "as far as consumes the whole pool"
+is the wrong answer — it produces a cliff where a *larger* pool yields a
+*shorter* conversation. `Qwen3.6-35B-A3B` hit exactly that: 256k on a desktop
+and 184k headless, so freeing the compositor's VRAM made the window worse. Each
+further slot is therefore taken only while it recovers more stranded cache than
+it costs in window. Muse-Glimmer's third slot recovers 28% of its pool for 8% of
+its window and is taken; the A3B's third recovers 7% for 28% and is not.
+
+Raise `SLOT_SPLIT_GAIN` to favour one long conversation, lower it to favour
+concurrency.
 
 **If you are running an agent, ask for two.** An agent that spawns subagents
 needs room for more than one conversation: with a single slot the scheduler
@@ -49,7 +59,7 @@ means the model's RoPE ceiling was reached:
 | gpt-oss-20b | **128k (max) x4** | 128k (max) | 128k (max) |
 | Qwen3-8B | **32k (max) x4** | 32k (max) | 32k (max) |
 | Gemma-4-26B-A4B | **207k x1** | 207k | 103k |
-| Muse-Glimmer-30B | **128k (max) x2** | 128k (max) | 128k (max) |
+| Muse-Glimmer-30B | **118k x3** | 128k (max) | 128k (max) |
 | Gemma-4-12B-QAT | **256k (max) x4** | 256k (max) | 256k (max) |
 
 Figures are computed for the detected card, so `lllm3090 models` is authoritative

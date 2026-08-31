@@ -86,6 +86,47 @@ def server_binary() -> Path:
     return config.LLAMA_DIR / "llama-server"
 
 
+#: Answers to :func:`supports`, keyed by the binary that gave them.
+#:
+#: Keyed on modification time as well as path, because ``install-engine
+#: --force`` replaces the binary underneath a panel that has been running for
+#: days, and an answer cached from the old one would outlive it.
+_SUPPORTS: dict[tuple[str, float, str], bool] = {}
+
+
+def supports(flag: str) -> bool:
+    """Whether the installed llama-server accepts ``flag``.
+
+    The engine build is pinned, but the *installed* build is whatever is on
+    disk: ``install-engine`` skips replacement when a binary is already there,
+    and ``setup`` calls it that way, so upgrading lllm3090 does not upgrade
+    llama.cpp. A flag this project learned about in one release can therefore
+    meet a binary from an earlier one.
+
+    Passing an unknown flag is not a soft failure -- llama-server exits, and
+    the panel reports "starting" over a process that is already gone. Asking
+    first costs one ``--help`` per binary per process.
+    """
+    binary = server_binary()
+    try:
+        key = (str(binary), binary.stat().st_mtime, flag)
+    except OSError:
+        return False
+    if key not in _SUPPORTS:
+        try:
+            out = subprocess.run(
+                [str(binary), "--help"],
+                capture_output=True, text=True, timeout=30, check=False,
+                env=dict(os.environ, LD_LIBRARY_PATH=str(config.LLAMA_DIR)),
+            )
+            _SUPPORTS[key] = flag in (out.stdout + out.stderr)
+        except Exception:
+            # Unable to ask is not permission to assume. The flag is an
+            # optimisation; the start is not.
+            _SUPPORTS[key] = False
+    return _SUPPORTS[key]
+
+
 def alive(target: int) -> bool:
     """Is this PID still a process?
 
@@ -263,7 +304,17 @@ def start(
                 # the checkpoint on disk decides whether the head is there, and
                 # llama.cpp refuses to start with this flag against one that
                 # lacks it. See lllm3090.gguf.
-                *(["--spec-type", "draft-mtp"] if gguf.has_mtp(model_path) else []),
+                #
+                # Both halves are checked, because both can be false on a
+                # working install: the engine build is pinned but not upgraded
+                # in place, so a binary older than --spec-type survives an
+                # lllm3090 upgrade and would exit on an argument it has never
+                # heard of.
+                *(
+                    ["--spec-type", "draft-mtp"]
+                    if supports("--spec-type") and gguf.has_mtp(model_path)
+                    else []
+                ),
                 # Vision: the projector is a separate GGUF that turns image
                 # input into embeddings the model can attend to.
                 *(["--mmproj", mmproj] if mmproj else []),

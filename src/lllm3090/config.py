@@ -112,6 +112,24 @@ AGENT_PROMPT_FLOOR = 40_000
 #: uncatalogued GGUF falls back to.
 DEFAULT_PARALLEL = 2
 
+#: How much more total context a split must buy before it is worth taking.
+#:
+#: Filling one conversation to the model's RoPE ceiling is the priority, but it
+#: is not worth stranding the rest of the card to do it. Where the pool is much
+#: larger than the ceiling, refusing to split wastes the difference: a model
+#: whose pool holds 2.8 windows gets one full window and 1.8 windows of cache
+#: that nothing can ever use.
+#:
+#: So a split is taken when it raises *total* usable context by this factor or
+#: more, and the number of slots is then the fewest that consume the whole pool
+#: -- which keeps each window as long as it can be. Below the threshold the
+#: single conversation keeps the ceiling and the remainder is accepted as
+#: unusable, because halving a window to recover a little cache is a bad trade.
+#:
+#: 1.5 is a judgement, not a measurement. Raise it to favour one long
+#: conversation, lower it to favour concurrency.
+SLOT_SPLIT_GAIN = 1.5
+
 #: Ceiling on slots handed out automatically.
 #:
 #: A model that reaches its RoPE ceiling before it exhausts VRAM can have extra

@@ -26,16 +26,18 @@ change is only visible in the source it does not need a line here.
 
 ### Changed
 
-- **One conversation is filled to the model's ceiling before a second slot is
-  opened.** The pool is a fixed number of tokens, so splitting it does not
-  create capacity — it halves the window and buys concurrency with it. Slots
-  are now granted only in whole windows, where the architecture has run out
-  before the card has and the spare cache could not have become a longer
-  conversation anyway.
+- **One conversation is filled to the model's ceiling, and the pool is split
+  only when refusing to would strand too much of the card.** Splitting does not
+  create capacity — it shortens every conversation and buys concurrency with
+  the difference — so one long conversation is the default. It is taken when
+  the total usable context rises by `SLOT_SPLIT_GAIN` (1.5x) or more, which
+  happens where the RoPE ceiling would otherwise waste most of the cache.
 
-  On a 24 GB desktop that is worth a great deal: `Qwen3.6-35B-A3B` goes from
-  169k x 2 to the full 256k, `Qwen3.8-27B` from 84k x 2 to 168k, and
-  `Gemma-4-26B-A4B` from 103k x 2 to 207k. Nothing loses window.
+  On a 24 GB desktop: `Qwen3.6-35B-A3B` goes from 169k x 2 to the full 256k,
+  `Qwen3.8-27B` from 84k x 2 to 168k, `Gemma-4-26B-A4B` from 103k x 2 to 207k,
+  and `Muse-Glimmer-30B` from 128k x 2 to 118k x 3 — it can seat a third
+  conversation for 8% of its window, and previously stranded a third of its
+  pool instead.
 
   **If you run an agent, ask for two slots** — `lllm3090 start <model>
   --parallel 2`. A single slot has nowhere to admit a subagent, so the

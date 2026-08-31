@@ -45,26 +45,60 @@ class Malformed(Exception):
     """This file is not a GGUF, or its header does not parse."""
 
 
-def _read(fh: BinaryIO, n: int) -> bytes:
-    buf = fh.read(n)
-    if len(buf) != n:
-        raise Malformed(f"wanted {n} bytes, got {len(buf)}")
-    return buf
+class _Reader:
+    """A file, plus the one fact needed to refuse a nonsense length.
+
+    Every length in a GGUF is read *from* the GGUF, so a corrupt or hostile
+    header can ask for one near ``2**64``. Handing that to ``read()`` raises
+    ``OverflowError`` or exhausts memory rather than failing as a parse error,
+    and the caller is a start-up path that must do neither. The file's size is
+    taken once here so the check costs nothing per read -- a modern vocabulary
+    is 150k strings, and two extra seeks apiece would be felt.
+    """
+
+    def __init__(self, fh: BinaryIO) -> None:
+        self.fh = fh
+        self.size = fh.seek(0, 2)
+        fh.seek(0)
+        # Tracked rather than asked for. ``tell()`` per read is not free, and
+        # a modern vocabulary is 150k strings: calling it made reading a real
+        # checkpoint four times slower than counting the bytes here.
+        self.pos = 0
+
+    def read(self, n: int) -> bytes:
+        if not 0 <= n <= self.size - self.pos:
+            raise Malformed(f"length {n} is not inside a {self.size}-byte file")
+        buf = self.fh.read(n)
+        if len(buf) != n:
+            raise Malformed(f"wanted {n} bytes, got {len(buf)}")
+        self.pos += n
+        return buf
+
+    def skip(self, n: int) -> None:
+        """Step over ``n`` bytes without materialising them."""
+        if not 0 <= n <= self.size - self.pos:
+            raise Malformed(f"skip of {n} is not inside a {self.size}-byte file")
+        self.fh.seek(n, 1)
+        self.pos += n
 
 
-def _u32(fh: BinaryIO) -> int:
+def _read(fh: _Reader, n: int) -> bytes:
+    return fh.read(n)
+
+
+def _u32(fh: _Reader) -> int:
     return int(struct.unpack("<I", _read(fh, 4))[0])
 
 
-def _u64(fh: BinaryIO) -> int:
+def _u64(fh: _Reader) -> int:
     return int(struct.unpack("<Q", _read(fh, 8))[0])
 
 
-def _string(fh: BinaryIO) -> str:
+def _string(fh: _Reader) -> str:
     return _read(fh, _u64(fh)).decode("utf-8", "replace")
 
 
-def _value(fh: BinaryIO, kind: int) -> Any:
+def _value(fh: _Reader, kind: int) -> Any:
     """One metadata value, returning a placeholder for the bulky ones.
 
     Arrays are where the tokenizer vocabulary lives -- a hundred thousand
@@ -80,7 +114,7 @@ def _value(fh: BinaryIO, kind: int) -> Any:
     if kind == ARRAY:
         element, count = _u32(fh), _u64(fh)
         if element in _FIXED:
-            _read(fh, struct.calcsize(_FIXED[element]) * count)
+            fh.skip(struct.calcsize(_FIXED[element]) * count)
         else:
             for _ in range(count):
                 _value(fh, element)
@@ -90,7 +124,8 @@ def _value(fh: BinaryIO, kind: int) -> Any:
 
 def header(path: Path | str) -> tuple[dict[str, Any], list[str]]:
     """A checkpoint's metadata and tensor names, read from its header alone."""
-    with open(path, "rb") as fh:
+    with open(path, "rb") as raw:
+        fh = _Reader(raw)
         if _read(fh, 4) != b"GGUF":
             raise Malformed("no GGUF magic; this is not a checkpoint")
         _u32(fh)  # format version, unused: the layout below is stable across 2-3
@@ -103,7 +138,7 @@ def header(path: Path | str) -> tuple[dict[str, Any], list[str]]:
         for _ in range(tensors):
             names.append(_string(fh))
             dims = _u32(fh)
-            _read(fh, 8 * dims)  # shape
+            fh.skip(8 * dims)    # shape
             _u32(fh)             # ggml type
             _u64(fh)             # offset into the tensor blob
     return meta, names
@@ -123,7 +158,11 @@ def has_mtp(path: Path | str) -> bool:
     """
     try:
         _, names = header(path)
-    except (OSError, Malformed, struct.error):
+    except (OSError, Malformed, struct.error, ValueError, MemoryError):
+        # Every failure means "no MTP". This decides whether to append a flag
+        # to a working command line: guessing yes on a file that could not be
+        # parsed produces an engine that exits at load, guessing no produces
+        # one that runs a little slower. ValueError covers OverflowError.
         return False
     return any(
         marker in name.lower() for name in names for marker in MTP_MARKERS

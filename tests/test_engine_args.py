@@ -34,10 +34,18 @@ def fake_engine(tmp_path, monkeypatch):
             return None
 
     def fake_popen(argv, **kw):
-        seen.append(argv)
+        # `--help` is engine.supports() probing the binary's capabilities, not
+        # a launch. Recording it would put it at seen[0] and shift every
+        # assertion in this file by one.
+        if "--help" not in argv:
+            seen.append(argv)
         return FakeProc()
 
     monkeypatch.setattr(engine.subprocess, "Popen", fake_popen)
+    # A stub shell script cannot answer --help, so the probe would say "no" and
+    # suppress every optional flag. Tests that care about the probe set this
+    # themselves; the rest get a binary that understands everything.
+    monkeypatch.setattr(engine, "supports", lambda flag: True)
     model = tmp_path / "model.gguf"
     model.write_bytes(b"GGUF")
     return seen, model, tmp_path
