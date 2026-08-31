@@ -17,7 +17,7 @@ from pathlib import Path
 
 import typer
 
-from . import catalog, config, engine, hardware, preflight
+from . import catalog, config, engine, hardware, preflight, storage
 from ._version import __version__
 
 # The engine build is pinned, not tracked. "Latest" would silently change the
@@ -377,10 +377,93 @@ def _apt_missing() -> list[str]:
     return missing
 
 
+def _configure_models_folder(requested: str | None) -> None:
+    """Settle where checkpoints live, before anything is downloaded into it.
+
+    Asked here because it is the last moment the answer is cheap. Once there
+    are 180 GB in the wrong place, changing it means copying them.
+
+    An explicit ``--model-folder`` is honoured whatever disk it lands on -- the
+    check exists to stop an unconsidered default, not to overrule a decision.
+    """
+    default = config.MODELS_DIR
+    if requested is None:
+        warning = storage.slow_disk_warning(default)
+        if warning is None:
+            disk = storage.backing_disk(default)
+            where = f" on /dev/{disk}" if disk else ""
+            _echo_check(
+                "models dir", True,
+                f"{default}{where} ({storage.free_gb(default):.0f} GB free)",
+            )
+            return
+        _echo_check("models dir", False, f"{default} is not on an NVMe")
+        typer.echo("\n" + warning)
+        raise typer.Exit(1)
+
+    target = Path(requested).expanduser()
+    if not target.exists():
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            typer.echo(
+                f"\nCannot create {target}: its parent belongs to another user.\n"
+                f"Create it once, then re-run this command:\n\n"
+                f"    sudo mkdir -p {target} && sudo chown "
+                f"{os.getlogin() if hasattr(os, 'getlogin') else '$USER'} {target}\n"
+            )
+            raise typer.Exit(1) from None
+    if not target.is_dir():
+        typer.echo(f"\n{target} exists and is not a directory.")
+        raise typer.Exit(1)
+    if not os.access(target, os.W_OK):
+        typer.echo(
+            f"\n{target} exists but you cannot write to it. Give it to yourself:\n\n"
+            f"    sudo chown "
+            f"{os.getlogin() if hasattr(os, 'getlogin') else '$USER'} {target}\n"
+        )
+        raise typer.Exit(1)
+
+    disk = storage.backing_disk(target)
+    where = f" on /dev/{disk}" if disk else ""
+    already_there = (
+        default.exists() and target.resolve() == default.resolve()
+    ) or target == default
+    if already_there:
+        _echo_check("models dir", True, f"{target}{where}")
+        return
+
+    # Everything else in the project reads config.MODELS_DIR, which defaults to
+    # ~/models. A symlink there means the choice needs no environment variable,
+    # no edit to the service unit, and nothing to remember on the next upgrade.
+    if default.is_symlink():
+        default.unlink()
+    elif default.is_dir():
+        if any(default.iterdir()):
+            typer.echo(
+                f"\n{default} already holds checkpoints, and setup will not move "
+                f"{storage.free_gb(default):.0f} GB for you.\n"
+                f"Copy them, verify, then swap the symlink in:\n\n"
+                f"    rsync -a --info=progress2 {default}/ {target}/\n"
+                f"    rsync -acn {default}/ {target}/     # must print nothing\n"
+                f"    mv {default} {default}.old && ln -s {target} {default}\n"
+            )
+            raise typer.Exit(1)
+        default.rmdir()
+    default.parent.mkdir(parents=True, exist_ok=True)
+    default.symlink_to(target)
+    _echo_check("models dir", True, f"{default} -> {target}{where}")
+
+
 @app.command()
 def setup(
     yes: bool = typer.Option(False, "--yes", "-y", help="Do not prompt."),
     service: bool = typer.Option(True, help="Install and start the user service."),
+    model_folder: str | None = typer.Option(
+        None, "--model-folder",
+        help="Where checkpoints live. Symlinked from ~/models, so nothing else "
+             "needs to know. Honoured whatever disk it is on.",
+    ),
 ) -> None:
     """Prepare this machine: system packages, engine, and the panel service.
 
@@ -407,7 +490,13 @@ def setup(
         else:
             raise typer.Exit(1)
 
-    # 2. System packages. Only what the engine actually needs -- uv brings its
+    # 2. Where the checkpoints go, before anything is downloaded into it.
+    #    Asked here because it is the last moment the answer is cheap: once
+    #    there are 180 GB in the wrong place, changing it means copying them.
+    typer.echo("")
+    _configure_models_folder(model_folder)
+
+    # 3. System packages. Only what the engine actually needs -- uv brings its
     #    own Python, so there is no python3-venv to install.
     missing = _apt_missing()
     if missing:
@@ -426,11 +515,11 @@ def setup(
     if not ok:
         raise typer.Exit(1)
 
-    # 3. The engine.
+    # 4. The engine.
     typer.echo("")
     install_engine(force=False)
 
-    # 4. The panel.
+    # 5. The panel.
     if service:
         typer.echo("")
         install_service(enable=True)

@@ -12,6 +12,24 @@ change is only visible in the source it does not need a line here.
 
 ### Added
 
+- **`lllm3090 setup` now refuses to put checkpoints on a slow disk when a
+  faster one is going spare**, and `--model-folder` says where they should go
+  instead. The chosen folder is symlinked from `~/models`, so nothing else —
+  not the service unit, not an environment variable, not the next upgrade —
+  needs to know about it.
+
+  Where the models live is invisible from inside the program and shows up as
+  "switching models feels slow". Measured on the reference machine with the
+  same 18.2 GB checkpoint: **62 s** from a SATA SSD against **15–26 s** from a
+  Gen4 NVMe, with a floor of ~10 s that is dequantisation and the VRAM upload.
+
+  It only fires when there is a decision to make: a machine with no NVMe, one
+  already using it, or a filesystem with no block device to classify (NFS,
+  tmpfs, a container) is left alone. An explicit `--model-folder` is honoured
+  whatever disk it names — the check exists to stop an unconsidered default,
+  not to overrule a choice. It will not move existing checkpoints for you; it
+  prints the copy-and-verify commands and stops.
+
 - **Multi-token prediction is turned on by itself** when a checkpoint carries
   the head. The model drafts its own next tokens and verifies them in one pass;
   measured on the reference 3090, `Qwen3.8-27B` goes from 34.9 to 56.6 tok/s
