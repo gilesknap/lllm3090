@@ -10,6 +10,25 @@ change is only visible in the source it does not need a line here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Multi-token prediction's own KV cache was never quantised**, so on every
+  model that carries the head it ran at `f16` beside a main cache at `q8_0`.
+  The draft model has separate flags — `--spec-draft-type-k` and
+  `--spec-draft-type-v` — which do not inherit from `--cache-type-k/v`, and the
+  engine set only the second pair.
+
+  Setting both gives back **2.45 KiB/token of the 4.80 that MTP cost** on the
+  dense 27B — about **412 MiB at a 168k window** — and moves the ceiling from
+  200704 tokens to 208896. It costs nothing: 43.7 → 44.1 tok/s at a short
+  prompt and 32.3 → 33.3 at 62k. It cannot change what the model says either,
+  because every draft is verified by the full model whatever cache produced it,
+  so a coarser draft can only be accepted less often — and measured, it is not.
+
+  Both caches are now set from one constant, which is the actual fix: they have
+  to agree, and the bug was that they were written in two places and only one
+  of them was written.
+
 ### Changed
 
 - **Every surface that shows a speed now says what it is a speed of.** A speed

@@ -173,6 +173,68 @@ def test_an_engine_too_old_to_speculate_is_launched_without_it(with_mtp, monkeyp
     assert "--spec-draft-n-max" not in seen[0]
 
 
+def test_the_draft_model_gets_the_same_quantised_cache_as_the_main_one(with_mtp):
+    """The draft model keeps its own KV cache and llama.cpp defaults it to f16
+    whatever --cache-type-k/v says, so for as long as only the main pair was
+    passed, MTP's context sat at full precision beside a main cache at half.
+    That gap was the whole of what MTP cost in memory: 2.45 of 4.80 KiB/token
+    on the dense 27B, about 412 MiB at a 168k window."""
+    seen, model, _ = with_mtp
+    engine.start(str(model), "M", 4096, 2, 0)
+    argv = seen[0]
+    for flag in ("--cache-type-k", "--cache-type-v",
+                 "--spec-draft-type-k", "--spec-draft-type-v"):
+        assert argv[argv.index(flag) + 1] == engine.CACHE_TYPE
+
+
+def test_a_prompt_drafter_is_not_handed_a_cache_it_does_not_have(fake_engine):
+    """The n-gram modes draft from the prompt, with no model and no context to
+    quantise. Passing the flag there would set one that describes nothing."""
+    seen, model, _ = fake_engine
+    prompt_only = speculation.Profile(
+        name="t", spec_types=("ngram-cache",), draft_n_max=None,
+        backends=None, summary="",
+    )
+    engine.start(str(model), "M", 4096, 2, 0, spec=prompt_only)
+    argv = seen[0]
+    assert argv[argv.index("--spec-type") + 1] == "ngram-cache"
+    assert "--spec-draft-type-k" not in argv
+
+
+def test_no_speculation_means_no_draft_cache_flags(fake_engine):
+    """A checkpoint with no head gets no draft context, so sizing one is
+    describing something that was never allocated."""
+    seen, model, _ = fake_engine
+    engine.start(str(model), "M", 4096, 2, 0)
+    assert "--spec-draft-type-k" not in seen[0]
+
+
+def test_a_binary_too_old_for_the_draft_cache_flags_still_starts(
+    with_mtp, monkeypatch
+):
+    """These arrived after --spec-type did, so supporting one is not supporting
+    the other, and an unknown argument makes llama-server exit at load."""
+    monkeypatch.setattr(
+        engine, "supports", lambda flag: not flag.startswith("--spec-draft-type")
+    )
+    seen, model, _ = with_mtp
+    engine.start(str(model), "M", 4096, 2, 0)
+    argv = seen[0]
+    assert argv[argv.index("--spec-type") + 1] == "draft-mtp"
+    assert "--spec-draft-type-k" not in argv
+    assert "--spec-draft-type-v" not in argv
+
+
+def test_both_caches_are_set_from_one_constant():
+    """They have to agree, and the bug was that they were written in two places
+    and only one of them was written."""
+    source = inspect.getsource(engine)
+    assert source.count('"q8_0"') == 1, (
+        "q8_0 belongs in CACHE_TYPE alone; a second literal is a second cache "
+        "setting free to drift from the first, which is this exact bug"
+    )
+
+
 def test_a_width_the_binary_has_never_heard_of_is_not_passed(with_mtp, monkeypatch):
     """--spec-type and --spec-draft-n-max arrived in different releases, so
     supporting one is not supporting the other."""

@@ -754,9 +754,10 @@ it.
 ### The draft cache is not quantised, and quantising it is free
 
 The draft context has *its own* cache flags — `--spec-draft-type-k` and
-`--spec-draft-type-v` — and `engine.start` sets neither, so MTP's cache runs at
-the default while the main one is `q8_0`. That is the whole of the MTP term:
-setting them halves it.
+`--spec-draft-type-v` — and for a long time `engine.start` set neither, so MTP's
+cache ran at its `f16` default while the main one was `q8_0`. That was the whole
+of the MTP term, and setting them halves it. **The engine now sets both**, from
+the same constant as the main cache, so the two cannot drift apart again.
 
 | dense 27B, Vulkan, MTP on | resident KiB/token |
 |---|---|
@@ -797,8 +798,9 @@ the ceiling — but it is margin, and margin is exactly what
 [CUDA spends](#what-cuda-costs-in-context).
 
 This is a lever on the **shipped Vulkan engine** and has nothing to do with
-CUDA. It is also a caution for any per-model KV calibration: the MTP term is
-about to halve if this changes, so calibrate after deciding, not before.
+CUDA. It was also the reason to settle it before calibrating anything: the MTP
+term halved when it landed, so any per-model KV figure taken before it was
+stale the moment it did.
 
 ### What it costs to have
 
