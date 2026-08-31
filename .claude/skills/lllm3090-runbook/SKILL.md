@@ -19,19 +19,34 @@ One GPU, one engine. Everything below assumes that invariant.
 
 Ports: **1919** engine (OpenAI *and* Anthropic APIs) · **8080** panel.
 
-**`~/models` is not on the fast disk.** `/home` is a SATA MX500 and `/` is the
-Gen4 NVMe, so every cold model load reads at the SATA ceiling. Measured with
-`O_DIRECT`, 2026-08-31:
+**`~/models` is a symlink to `/srv/models` on the NVMe** (moved 2026-08-31).
+`/home` is a Crucial MX500 on SATA and `/` is a Lexar NQ790 on Gen4 NVMe;
+`MODELS_DIR` is an env var (`LLLM3090_MODELS_DIR`) but the symlink means the
+package needs to know nothing. The originals are still at `~/models.sata` until
+they are deleted. Read speeds, `O_DIRECT`:
 
-| | `/` (Lexar NQ790, NVMe Gen4) | `/home` (Crucial MX500, SATA) |
+| | `/` (NVMe Gen4) | `/home` (SATA) |
 |---|---|---|
 | sequential | 4.4 GB/s | 0.53 GB/s |
 | random 1 MiB | 5.15 GB/s | 0.37 GB/s |
 
-A 17.7 GB checkpoint is therefore ~33 s to load rather than ~4. Moving the
-directory needs a destination on `/`, which is root-owned; `MODELS_DIR` is an
-env var (`LLLM3090_MODELS_DIR`) and a symlink at `~/models` works, so the
-package needs to know nothing about it.
+**A cold load does not improve by the ratio of those numbers**, and predicting
+that it would was wrong by 6x. Measured on the same 18.2 GB checkpoint, page
+cache dropped per run with `posix_fadvise(DONTNEED)` -- which needs no root, and
+without which the second run reads a warm cache and looks impossible:
+
+| | seconds to ready |
+|---|---|
+| SATA, cold | 62 |
+| NVMe, cold | 15-26 (three runs) |
+| NVMe, warm cache | 9.8 |
+
+The warm figure is the floor: dequantisation, the VRAM upload and graph build
+cost ~10 s whatever the disk does. Subtracting it, the effective read rate
+during a load is ~0.35 GB/s on SATA and ~1.8 GB/s on NVMe -- the SATA figure
+matches its random-read measurement, and the NVMe one is well under its
+sequential. **A load is not a sequential stream, so never size one from a
+sequential benchmark.** The real gain from the move is about 3x, not 8x.
 
 ## Install and upgrade
 
