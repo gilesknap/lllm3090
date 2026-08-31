@@ -56,6 +56,12 @@ change is only visible in the source it does not need a line here.
 
 ### Changed
 
+- **`going-faster.md` is a scoreboard again**, down from 1014 lines to 580 with
+  every measurement intact. It had grown a second copy of the explanations that
+  live in its companion `what-makes-it-fast.md`, and was restating the same
+  CUDA figures in four separate tables. The Vulkan and CUDA sweeps for each
+  lever are now single side-by-side tables, which is also the better shape for
+  a page whose main finding is that several verdicts differ by backend.
 - **Every surface that shows a speed now says what it is a speed of.** A speed
   is a property of a configuration, and since a machine can now carry two
   backends the card is no longer the whole of that: the same dense 27B serves
