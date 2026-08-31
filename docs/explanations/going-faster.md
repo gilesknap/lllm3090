@@ -78,6 +78,12 @@ last column is each row's best workload against the roofline, and the two rows
 that exceed it are not anomalies — that is the definition of speculative
 decoding working.
 
+That is a **short-prompt** figure, as is every number in this section. Fill the
+168k window and CUDA + MTP holds about **38.7 tok/s** — still 2.85× what the same
+engine manages there without speculation, because
+[drafting is worth more at depth](#what-depth-costs-and-what-it-buys-speculation),
+not less.
+
 ### What to actually run
 
 **On the engine that installs today, run the default and change nothing.**
@@ -100,7 +106,7 @@ can be pointed at it without being reinstalled over:
 
 ```bash
 LLLM3090_LLAMA_DIR=~/.local/share/lllm3090/engines/b10715-cuda-sm86 \
-  lllm3090 start Qwen3.8-27B --ctx 150000
+  lllm3090 start Qwen3.8-27B
 ```
 
 `LLLM3090_LLAMA_DIR` redirects both the binary and the `LD_LIBRARY_PATH` the
@@ -109,11 +115,8 @@ reaches the engine only when the *CLI* starts it, though — the panel starts th
 engine in its own process, so a model started from the browser gets whatever the
 systemd unit's environment says, which is Vulkan.
 
-The smaller `--ctx` is not optional. `catalog.fit` plans against a fixed VRAM
-envelope and does not know which backend it is planning for, and CUDA reports
-24125 MiB where Vulkan reports 24822 — about 22k tokens of q8_0 KV. Left to plan
-its usual ~172k window, the load will get through the weights and then fail on
-the KV allocation, which reads as a model that loaded and then died.
+The planned window needs no adjustment, but it has no margin left. See
+[what CUDA costs in context](#what-cuda-costs-in-context).
 
 **The copy-heavy configuration is not reachable from this CLI.**
 `engine.start` hardcodes `--spec-type draft-mtp` and passes no draft width, with
@@ -129,10 +132,59 @@ refactoring, renaming, reformatting. It costs about 14% on prose and code
 editing, so it is a per-session choice and not a better default.
 
 :::{note}
-Every figure above was measured at `--ctx-size 40960` with short prompts.
-Decode slows as the KV cache fills, and the panel plans this model a window four
-times that size. **How much it slows has not been measured here**, so treat
-these as the top of the range rather than what a long session will hold.
+Every figure above was measured with short prompts. Decode slows as the cache
+fills — see [what depth costs](#what-depth-costs-and-what-it-buys-speculation) —
+so treat them as the top of the range rather than what a long session holds.
+:::
+
+### What depth costs, and what it buys speculation
+
+The tables above are all shallow-prompt numbers, and the panel plans this model
+a 168k window. So: one server at 172032, prompts from 4k to 158k, three samples
+each, on CUDA.
+
+| depth | prefill | baseline | + MTP | MTP is worth |
+|---|---|---|---|---|
+| 3.7k | 1314/s | 42.2 | 66.0 | 1.56× |
+| 7.4k | 1298/s | 40.6 | 80.4 | 1.98× |
+| 14.7k | 1267/s | 39.4 | 63.8 | 1.62× |
+| 33k | 1145/s | 33.2 | 58.7 | 1.77× |
+| 62k | 974/s | 25.6 | 57.2 | 2.23× |
+| 95k | 847/s | 19.4 | 46.3 | 2.39× |
+| 125k | 777/s | 17.8 | 44.3 | 2.49× |
+| **158k** | **695/s** | **13.6** | **38.7** | **2.85×** |
+
+**Speculation is worth more at depth, not less.** MTP goes from 1.6× at a short
+prompt to **2.85× at a full window** — and the mechanism is the same one this
+page has been arguing all along. A deeper cache makes every forward pass more
+expensive, and verifying k drafts amortises one expensive pass across k tokens.
+The costlier the pass, the more there is to amortise.
+
+**So it also flattens the depth penalty.** Bare decode collapses to 0.32× of its
+shallow rate across the window, 42.2 → 13.6. With MTP the same span is 0.55×,
+about 70 → 38.7. Speculation does not stop a long context being slow; it roughly
+halves how much being long costs you.
+
+**Prefill halves and speculation does nothing for it**, exactly as the two-clocks
+section predicts: 1314 → 695 with no drafting and 1179 → 664 with it. A wider
+prompt is still a wider prompt.
+
+The practical figure: a full-window session on CUDA holds about **38.7 tok/s**,
+against 84.9 on a short prompt. Both are true and the page quotes the short one
+everywhere above, so this is the correction to carry away from it.
+
+:::{note}
+Each run re-measured its shallowest depth last, as a control, because depth and
+elapsed time both rise through a run — a card slowing as it heats would read
+exactly like a cache slowing as it fills. The controls came back at 69.9 against
+66.0 (MTP, *faster* at 79 °C) and 41.2 against 42.2 (baseline, 2.4% down). So
+the decline is depth, and not the drift that
+[cost the width numbers their precision](#draft-width-matters-more-than-which-drafter).
+
+The `+ MTP` column carries content noise the baseline column does not:
+acceptance swings 61–84% across these rows with no trend in depth, which is why
+7.4k reads 80.4. Read it as noisy around a trend. The ratio column inherits that
+noise; the trend across it does not depend on any single row.
 :::
 
 ## Two clocks, not one
@@ -559,6 +611,66 @@ have been weighing is 1.6×.
 None of this changes what installs. The shipped engine is Vulkan, every verdict
 in the Vulkan column stands, and a user who switches ngram on today still gets
 0.65×.
+
+### What CUDA costs in context
+
+The speed is not free, and the price is the window. Measured by loading the
+dense 27B at rising context until the server dies, desktop session running,
+`--parallel 1` and q8_0 KV both ways:
+
+| ctx | CUDA | Vulkan |
+|---|---|---|
+| 40960 | 18300 MiB | 17914 MiB |
+| 172032 | **23902 MiB** | 23009 MiB |
+| 176128 | **dies** | — |
+| 188416 | dies | 23645 MiB |
+| 200704 | dies | **24121 MiB** |
+| 204800 | dies | dies |
+
+**CUDA's ceiling is ~28k tokens lower** — it stops between 172032 and 176128
+where Vulkan reaches 200704. Two separate costs make that up, and the second was
+not expected:
+
+- **~230 MiB more fixed overhead**, which is roughly the 24125-against-24822 MiB
+  of reported capacity this page already noted.
+- **~10% more per token of KV.** The resident slope is 43.8 KiB/token on CUDA
+  against 39.8 on Vulkan, for the same model with the same `q8_0` cache. This
+  one compounds with depth rather than being a flat tax, and it is the larger
+  of the two at a full window.
+
+**The planner's plan still fits, with nothing to spare.** `catalog.fit` gives
+this model 168k — exactly 172032 tokens — which loads on CUDA with 674 MiB free.
+So no `--ctx` adjustment is needed. But on Vulkan that plan sits ~28k tokens
+under the ceiling and on CUDA it sits *at* it, so the entire safety margin the
+planner believes it has is gone. The desktop's own VRAM use was observed moving
+about 100 MiB in an afternoon, and that is now the whole budget.
+
+The mechanism is `config.KV_OVERHEAD_FACTOR`, one constant of `1.12` calibrated
+on Gemma-4-26B-A4B — a Vulkan engine running a model with no MTP head. Measured
+against this model's nominal 32 KiB/token, all four combinations:
+
+| resident KiB/token | no MTP | MTP on |
+|---|---|---|
+| Vulkan | 35.00 (**1.094×**) | 39.80 (1.244×) |
+| CUDA | 39.00 (1.219×) | 43.77 (**1.368×**) |
+
+**The constant is not wrong, it is incomplete**: it is very nearly the top-left
+cell, the one case it was measured on. Three separable things fill in the rest.
+
+- **MTP's draft context costs ~4.8 KiB/token of KV of its own** — 4.77 on CUDA
+  against 4.80 on Vulkan. That near-identity is the evidence it belongs to the
+  second cache rather than to the backend, so it is an additive term, not a
+  multiplier.
+- **CUDA costs ~1.11× per token of KV**, steady whether MTP is on (1.100×) or
+  off (1.114×).
+- **CUDA carries ~230 MiB more fixed overhead**, 228 with MTP and 233 without.
+
+So `fit` under-counts KV on both backends today, and the driver and workspace
+reserves absorb it — on Vulkan. That is a backend-blind planner rather than a
+CUDA bug, and it is why a second backend cannot simply be dropped in beside the
+first. It is also why the two right-hand cells must not be read as backend
+constants: they carry MTP's cost inside them, and a model with no MTP head does
+not pay it.
 
 ### What it costs to have
 

@@ -102,8 +102,37 @@ already carries it, from `nvidia-smi`; the profiles span 8.6, 8.9 and 12.0. A
 
 Two things a downloaded build gives you that a compiled one does not: an
 identity (it reports `build 1, commit <sha>`, because a shallow clone has no tag
-history, and nobody attests to the binary), and **~700 MiB of VRAM** -- CUDA
-reports 24125 MiB where Vulkan reports 24822, which `catalog.fit` does not know.
+history, and nobody attests to the binary), and **context**.
+
+**CUDA costs ~28k tokens of window**, measured by loading the dense 27B until it
+dies, desktop session running:
+
+| | loads at | dies at |
+|---|---|---|
+| Vulkan | 200704 | 204800 |
+| CUDA | 172032 | 176128 |
+
+`catalog.fit` plans this model **168k = exactly 172032 tokens**, so the shipped
+plan still loads on CUDA -- with 674 MiB spare and **none of the planner's
+margin left**, against ~28k on Vulkan. The desktop's own VRAM moved ~100 MiB in
+one afternoon here, and that is now the whole budget.
+
+Two costs, not one: ~230 MiB more fixed overhead (the 24125-vs-24822 MiB of
+reported capacity), and **~11% more per token of KV**, which compounds with
+depth. Resident KiB/token against a nominal 32:
+
+| | no MTP | MTP on |
+|---|---|---|
+| Vulkan | 35.00 (1.094x) | 39.80 (1.244x) |
+| CUDA | 39.00 (1.219x) | 43.77 (1.368x) |
+
+`config.KV_OVERHEAD_FACTOR` is 1.12, calibrated on Gemma-4-26B-A4B -- Vulkan, no
+MTP head -- which is the top-left cell. It is incomplete rather than wrong.
+**MTP's draft context is a second KV cache costing ~4.8 KiB/token** (4.77 CUDA,
+4.80 Vulkan -- so it is the cache's cost, not the backend's). Never collapse
+these into one backend constant: 1.244/1.368 carry MTP inside them, and applying
+them to a model with no MTP head plans it ~14% short.
+
 `LLAMA_CURL=OFF` costs nothing: llama.cpp's `-hf` fetcher is unused here.
 
 ## Handing a sudo script to Giles
@@ -346,6 +375,16 @@ On a single-GPU box the benchmark and the workload are the same machine.
   `ENGINE_PORT + 2` and refuses to start while the engine answers -- it used to
   bind 1919 and clear it with `pkill -f "llama-server --model <MODEL>"`, which
   matches the *installed* engine serving that same checkpoint to somebody.
+- **A speed with no depth attached is half a number.** Every sweep figure here
+  is a short-prompt figure, and this model's window is 168k. Measured on CUDA at
+  172032, one server, 4k -> 158k: decode **42.2 -> 13.6** tok/s bare and
+  **~70 -> 38.7** with MTP; prefill 1314 -> 695. Quote the depth or quote a
+  range.
+  **Speculation is worth more at depth, not less** -- MTP is 1.56x at 4k and
+  **2.85x at 158k**, because a deeper cache makes each forward pass costlier and
+  verifying k drafts amortises one costly pass across k tokens. It also flattens
+  the depth penalty: bare decode falls to 0.32x across the window, MTP's to
+  0.55x.
 - **Cold and warm are different measurements.** The prefix cache means a repeat
   of the same prompt is not a cold prefill. Use a unique prefix (a UUID in the
   text) when you want a genuine cold number.
