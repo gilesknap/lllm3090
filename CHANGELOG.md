@@ -12,6 +12,12 @@ change is only visible in the source it does not need a line here.
 
 ### Added
 
+- **An explanation of what actually makes a local model fast**
+  (`docs/explanations/what-makes-it-fast.md`), written for someone who has not
+  met the vocabulary: the two clocks, why guessing ahead works and why it never
+  changes the answer, what a draft width is, what a KV cache costs, and how to
+  read a benchmark headline that says "8× faster". Its companion,
+  `going-faster.md`, scores the levers; this one explains them.
 - **`lllm3090 setup` now refuses to put checkpoints on a slow disk when a
   faster one is going spare**, and `--model-folder` says where they should go
   instead. The chosen folder is symlinked from `~/models`, so nothing else —
@@ -81,6 +87,17 @@ change is only visible in the source it does not need a line here.
   `lllm3090 claude` now says so when it finds a one-slot engine.
 - `Qwen3.6-35B-A3B-Q4KS` is no longer flagged as tight on a 24 GB desktop. It
   was tight only because the pool was being split; one window gives it 69k.
+
+### Fixed
+
+- **The claim that Vulkan prefill is 3-4x slower than CUDA was wrong.** It is
+  1.3x, measured on an RTX 3090 with both engines built from the same llama.cpp
+  commit. The figure had been repeated in `installation.md`, `one-gpu.md` and
+  `going-faster.md` without anyone here having measured it. The number that made
+  it plausible was right -- a cold 80k prompt really does take about two minutes
+  -- but that is mostly what the card costs to prefill a dense 27B, not a tax the
+  backend charges: CUDA takes it to a minute and a half, not to thirty seconds.
+  Decode, meanwhile, is 1.28x rather than the ~10% the scoreboards suggest.
 
 ## [0.6.0] — 2026-08-28
 
