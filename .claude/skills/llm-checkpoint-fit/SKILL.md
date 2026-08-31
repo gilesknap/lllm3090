@@ -167,6 +167,37 @@ fails at load — the engine supports per-tensor fp8 (W8A16) and 128×128 block
 fp8, not channel-wise W8A8. Same model, same bit width, different vendor,
 different outcome.
 
+## 5b. Format: GGUF or EXL3, on a 3090
+
+Asked periodically because EXL3 is reported as "better for 30/40 series". Half
+right, and the wrong half here: its GEMM kernel is reported at roughly
+memory-bound latency at 4bpw **on an RTX 4090, under the conditions of that
+benchmark**, and documented as still needing work on **Ampere**. Do not read
+that as "all of Ada" -- one card was measured. A 3090 is on the side that was
+not.
+
+Two more reasons it does not pay on this card:
+
+- **Above ~4 bpw the formats measure as equivalent.** EXL3's trellis
+  quantisation wins below ~3 bpw; the headline case is a 70B whose *weights*
+  come under 16 GB at ~1.6 bpw. Read that as a weights figure -- the KV cache
+  is on top of it and the quoted configurations are not uniform-bitrate, so it
+  does not imply a long context. A catalogue that lives at IQ4_XS is in the
+  regime where the formats tie anyway.
+- **It is a second engine, not a file format swap.** EXL3 needs ExLlamaV3, with
+  its own process model and non-GGUF model directories, and every KV figure and
+  measured speed is calibrated to llama.cpp's q8 cache. Switching invalidates
+  the numbers until they are all re-measured.
+
+**You would not lose MTP.** TabbyAPI exposes ExLlamaV3's `draft_mode` with
+`mtp` and `ngram` alongside `model`, so self-speculation survives the move --
+it is configured differently, not forfeited. What is genuinely llama.cpp-only
+in this stack is `--mmproj` vision and the native `/v1/messages` endpoint that
+lets an Anthropic client connect without a translation proxy.
+
+**Right for:** a 4090 owner fitting a 70B at 2.5-3 bpw that otherwise will not
+fit. Not for a 24 GB Ampere card running a sparse 35B at 4 bits.
+
 ## 6. Speed, if it fits: a roofline in one line
 
 ```
