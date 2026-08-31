@@ -347,13 +347,29 @@ def test_linger_is_reported_honestly_when_it_cannot_be_determined(monkeypatch):
     assert "enable-linger" in msg, "the message must say how to fix it"
 
 
-def test_headless_never_offers_less_than_a_desktop():
-    """Freeing the compositor's VRAM can only add cache, never remove it."""
+def test_headless_never_leaves_you_worse_off_than_a_desktop():
+    """Freeing the compositor's VRAM can only add cache, never remove it.
+
+    The pool is the hard part of that and never regresses. The per-conversation
+    window is allowed to, but only in exchange for more total capacity -- which
+    is the trade the split rule exists to make. ``Qwen3.6-35B-A3B-MTP`` is the
+    live case: headless its pool holds 1.977 windows, so two slots get 259072
+    each against a desktop's single 262144. Three thousand tokens, 1.2%, for
+    twice the capacity.
+
+    What must never happen is a plan that is worse on *both* counts, which is
+    what "more VRAM made it worse" would actually mean. An earlier version of
+    the rule did exactly that -- 256k on a desktop and 184k headless -- by
+    taking every slot the pool allowed.
+    """
     for m in catalog.load_catalog():
         d = catalog.plan(m, desktop=True)
         h = catalog.plan(m, desktop=False)
-        assert h.pool >= d.pool, f"{m.name} claims less with more VRAM free"
-        assert h.per_session >= d.per_session
+        assert h.pool >= d.pool, f"{m.name} claims less cache with more free"
+        assert h.per_session >= d.per_session or h.pool > d.pool, (
+            f"{m.name} gives a shorter conversation headless "
+            f"({h.per_session} vs {d.per_session}) and no more total capacity"
+        )
 
 
 def test_an_unknown_session_is_assumed_to_be_a_desktop(monkeypatch):
