@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Sweep llama.cpp's speculation backends on one model, several workloads.
 
 Each config needs its own server, so the engine is restarted per config. Every
