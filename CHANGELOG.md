@@ -12,6 +12,21 @@ change is only visible in the source it does not need a line here.
 
 ### Added
 
+- **`lllm3090 start <model> --profile copy`** asks the engine to guess ahead
+  more aggressively, for a session that is mostly reproducing its input. On
+  CUDA it takes the dense 27B's copy-heavy figure from 94.0 to 115.1 tok/s. It
+  costs about 14% on prose, so it is a session-shaped choice rather than a
+  better default.
+
+  It is **refused on Vulkan**, which is what installs today, and the refusal
+  carries the measurements: stacking prompt-lookup on the MTP head reads
+  0.84–0.90× against the head alone there, and widening the draft from 3 to 7
+  costs a further 22% on prose. The verdicts genuinely invert between backends
+  — the same n-gram drafting is 1.41× on CUDA copy-heavy work and 0.65× on
+  Vulkan prose — because verifying a draft is a batched forward pass and Vulkan
+  gets nothing from a wider batch. A "go faster" switch that did not know which
+  backend it was on would be a footgun aimed at the default install.
+
 - **An explanation of what actually makes a local model fast**
   (`docs/explanations/what-makes-it-fast.md`), written for someone who has not
   met the vocabulary: the two clocks, why guessing ahead works and why it never

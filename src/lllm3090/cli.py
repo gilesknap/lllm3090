@@ -14,7 +14,16 @@ from pathlib import Path
 
 import typer
 
-from . import catalog, config, engine, engines, hardware, preflight, storage
+from . import (
+    catalog,
+    config,
+    engine,
+    engines,
+    hardware,
+    preflight,
+    speculation,
+    storage,
+)
 from ._version import __version__
 
 # The pin, the digest recorded for it and the fetch itself live in
@@ -338,12 +347,27 @@ def start(
         None, min=1,
         help="Conversations sharing the pool. Default: 2, for subagents.",
     ),
+    profile: str = typer.Option(
+        None, "--profile",
+        help=(
+            "Speculation settings, by name. Each is refused on a backend it "
+            f"was not measured to win on. Known: {speculation.names()}."
+        ),
+    ),
 ) -> None:
     """Start the engine on an installed model."""
     entry = next((m for m in catalog.installed() if m["name"] == model), None)
     if entry is None:
         typer.echo(f"{model!r} is not installed. Try: lllm3090 models")
         raise typer.Exit(1)
+    # Resolved before anything is stopped. Which speculation settings pay is a
+    # property of the backend, and a refusal is worth nothing if the engine
+    # that was serving has already been killed to deliver it.
+    try:
+        spec = speculation.resolve(profile, engines.backend())
+    except speculation.Unavailable as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(1) from exc
     known = next((m for m in catalog.load_catalog() if m.name == model), None)
     if ctx is None:
         p = catalog.launch_plan(model, parallel)
@@ -359,8 +383,11 @@ def start(
     if warning:
         typer.echo(warning)
     template = known.chat_template if known else None
+    if profile is not None:
+        typer.echo(f"Speculation: {spec.name} -- {spec.summary}")
     ok, detail = engine.start(
-        entry["path"], model, ctx, parallel, 300, template, entry.get("mmproj")
+        entry["path"], model, ctx, parallel, 300, template, entry.get("mmproj"),
+        spec,
     )
     typer.echo(detail)
     raise typer.Exit(0 if ok else 1)

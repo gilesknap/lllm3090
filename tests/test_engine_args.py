@@ -11,7 +11,7 @@ import inspect
 
 import pytest
 
-from lllm3090 import config, engine
+from lllm3090 import config, engine, speculation
 
 
 @pytest.fixture
@@ -95,7 +95,90 @@ def test_mtp_is_enabled_from_the_file_not_the_catalogue(tmp_path, monkeypatch):
     missing = tmp_path / "not-here.gguf"
     assert gguf.has_mtp(missing) is False, "an unreadable file must not add a flag"
 
-    argv = inspect.getsource(engine.start)
+    argv = inspect.getsource(engine.spec_flags)
     assert "gguf.has_mtp(model_path)" in argv, (
         "the flag must be decided from the checkpoint, not from a catalogue field"
     )
+
+
+# ---------------------------------------------------------------------------
+# Speculation profiles
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def with_mtp(fake_engine, monkeypatch):
+    """The fake engine, with a checkpoint that carries the head.
+
+    The fixture's model is four bytes of magic and nothing else, which reads
+    correctly as "no MTP". Every profile worth testing is about what happens
+    when the head *is* there.
+    """
+    monkeypatch.setattr(engine.gguf, "has_mtp", lambda path: True)
+    return fake_engine
+
+
+def test_the_default_is_what_shipped_before_there_was_a_choice(with_mtp):
+    """MTP alone, at llama.cpp's own draft width. Passing no width is a
+    decision -- 3 is the right width on Vulkan -- not an omission."""
+    seen, model, _ = with_mtp
+    engine.start(str(model), "M", 4096, 2, 0)
+    argv = seen[0]
+    assert argv[argv.index("--spec-type") + 1] == "draft-mtp"
+    assert "--spec-draft-n-max" not in argv
+
+
+def test_the_copy_profile_asks_for_both_drafters_and_a_wider_draft(with_mtp):
+    """The configuration that takes the dense 27B from 94.0 to 115.1 tok/s on
+    copy-heavy work, and the only reason the flags are a table at all."""
+    seen, model, _ = with_mtp
+    engine.start(str(model), "M", 4096, 2, 0, spec=speculation.COPY)
+    argv = seen[0]
+    assert argv[argv.index("--spec-type") + 1] == "draft-mtp,ngram-cache"
+    assert argv[argv.index("--spec-draft-n-max") + 1] == "7"
+
+
+def test_a_checkpoint_with_no_head_gets_no_speculation_at_all(fake_engine):
+    """The default degrades rather than refusing: llama.cpp exits at load when
+    handed draft-mtp against a checkpoint that has no head, so the alternative
+    to dropping the flag is an engine that does not start."""
+    seen, model, _ = fake_engine
+    engine.start(str(model), "M", 4096, 2, 0)
+    assert "--spec-type" not in seen[0]
+
+
+def test_a_named_profile_is_refused_rather_than_approximated(fake_engine):
+    """Where the default degrades, a request does not.
+
+    --profile copy is a measurement of draft-mtp,ngram-cache. Run against a
+    checkpoint with no head it would be ngram-cache alone -- a different
+    configuration, which on Vulkan measures 0.65x. Serving that under the same
+    name is how a number stops meaning anything.
+    """
+    seen, model, _ = fake_engine
+    ok, detail = engine.start(str(model), "M", 4096, 2, 0, spec=speculation.COPY)
+    assert not ok
+    assert "multi-token prediction head" in detail
+    assert not seen, "must not launch the engine at all"
+
+
+def test_an_engine_too_old_to_speculate_is_launched_without_it(with_mtp, monkeypatch):
+    """The build is pinned but not upgraded in place -- install-engine skips a
+    binary that is already there -- so a binary older than --spec-type survives
+    an lllm3090 upgrade, and passing it one would make it exit at load."""
+    monkeypatch.setattr(engine, "supports", lambda flag: False)
+    seen, model, _ = with_mtp
+    engine.start(str(model), "M", 4096, 2, 0, spec=speculation.COPY)
+    assert "--spec-type" not in seen[0]
+    assert "--spec-draft-n-max" not in seen[0]
+
+
+def test_a_width_the_binary_has_never_heard_of_is_not_passed(with_mtp, monkeypatch):
+    """--spec-type and --spec-draft-n-max arrived in different releases, so
+    supporting one is not supporting the other."""
+    monkeypatch.setattr(engine, "supports", lambda flag: flag != "--spec-draft-n-max")
+    seen, model, _ = with_mtp
+    engine.start(str(model), "M", 4096, 2, 0, spec=speculation.COPY)
+    argv = seen[0]
+    assert argv[argv.index("--spec-type") + 1] == "draft-mtp,ngram-cache"
+    assert "--spec-draft-n-max" not in argv
