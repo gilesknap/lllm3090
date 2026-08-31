@@ -23,6 +23,7 @@ figure in the catalogue is only as good as the instrument that produced it.
 
 Environment:
 
+- ``SWEEP_LLAMA_DIR``     engine to sweep (default the installed one)
 - ``SWEEP_SAMPLES``       timed generations per prompt per config (default 7)
 - ``SWEEP_LOGDIR``        where per-config server logs land (default /tmp)
 - ``SWEEP_DRAFT``         path to a separate drafter GGUF; enables `dflash`
@@ -31,10 +32,20 @@ Environment:
 Not every config applies to every model. `draft-mtp` needs a checkpoint with
 MTP layers, and `dflash` needs a drafter published for that exact target — so a
 config that cannot start is reported and skipped rather than aborting the run.
+
+Two result sets are only comparable if they came from the same binary on the
+same backend, so the header records both -- build number, and the device line
+that says whether this is Vulkan or CUDA and which matrix cores it found. A
+table of tokens per second that does not say what produced it is how the last
+set of numbers became untrustworthy.
 """
 import json, os, signal, subprocess, sys, time, urllib.request, uuid
 
-D = os.path.expanduser("~/.local/share/lllm3090/llama.cpp")
+#: Which engine to sweep. Overridable because comparing backends means running
+#: the same sweep against two builds, and editing this file between runs is how
+#: you end up unsure which one produced which table.
+D = os.path.expanduser(
+    os.environ.get("SWEEP_LLAMA_DIR", "~/.local/share/lllm3090/llama.cpp"))
 MODEL = sys.argv[1]
 TPL = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] else None
 ONLY = sys.argv[3].split(",") if len(sys.argv) > 3 else None
@@ -150,10 +161,28 @@ def served():
         return f"?({e})"
 
 
+def probe(*flags):
+    """Ask the binary about itself. LD_LIBRARY_PATH matters: the shared ggml
+    libraries sit beside the binary, not on the system path."""
+    try:
+        r = subprocess.run([f"{D}/llama-server", *flags], capture_output=True,
+                           text=True, timeout=60,
+                           env=dict(os.environ, LD_LIBRARY_PATH=D))
+        out = [ln.strip() for ln in (r.stdout + r.stderr).split("\n") if ln.strip()]
+        return " | ".join(out[:4])
+    except Exception as e:
+        return f"?({e})"
+
+
 print(f"model:   {MODEL}")
 print(f"samples: {SAMPLES} timed + 1 discarded warm-up, per prompt per config")
 print(f"drafter: {DRAFT} (n-max {DFLASH_NMAX})" if DRAFT
       else "drafter: none -- set SWEEP_DRAFT to include the dflash config")
+print(f"engine:  {D}")
+print(f"build:   {probe('--version')}")
+# Names the backend -- 'Vulkan0' or 'CUDA0' -- and so distinguishes two runs
+# that are otherwise the same table of numbers.
+print(f"device:  {probe('--list-devices')}")
 print(f"GPU before: {gpu()}\n", flush=True)
 results = {}
 for label, extra in CONFIGS:
@@ -177,6 +206,14 @@ for label, extra in CONFIGS:
               flush=True)
         proc.send_signal(signal.SIGTERM)
         continue
+    if not results:
+        # Only the load log names the matrix-core extension in use, and coopmat1
+        # against coopmat2 was 2.2x against 4.4x on prefill. Printed once.
+        with open(f"{LOGDIR}/sw-{label}.log", errors="replace") as f:
+            for line in f:
+                if "matrix cores" in line or "Device 0:" in line:
+                    print(f"cores:   {line.strip()}", flush=True)
+                    break
     print(f"--- {label} ---   serving: {served()}", flush=True)
     # Warm-up: graph build and upload land on this one, never on a timed sample.
     gen(PROMPTS["prose"][0], 32)

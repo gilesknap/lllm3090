@@ -195,3 +195,11 @@ include DFlash2:
 SWEEP_DRAFT=~/models/Qwen3.8-27B-DFlash2-Q4_K_M.gguf \
   dev/spec-sweep.py ~/models/Qwen3.8-27B/Qwen3.8-27B-UD-Q4_K_S.gguf
 ```
+
+`SWEEP_LLAMA_DIR` points it at a different engine, which is how a CUDA build
+gets compared against a Vulkan one without editing the script between runs. Take
+both from the same upstream build when doing that, or the comparison is a
+version comparison as well as a backend one. Every run prints the build number
+and the device line it found, because two tables of tokens per second that do
+not say what produced them cannot be compared later — which is precisely how the
+earlier numbers stopped being usable.
