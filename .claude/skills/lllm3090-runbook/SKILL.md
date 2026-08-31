@@ -79,9 +79,10 @@ from the catalogue: llama.cpp *refuses to start* with that flag against a
 checkpoint lacking the head, and a metadata key is not proof -- a conversion can
 announce `nextn_predict_layers` and ship no tensors.
 
-**ngram is a regression, and stacking it with MTP is worse than either.**
+**ngram is a regression, and stacking it with MTP is worse than MTP alone.**
 Measured on Qwen3.8-27B: `ngram-cache` alone 0.88x, `draft-mtp,ngram-cache`
-1.42x against MTP's own 1.62x. Hit rates on novel generation are low, so you pay
+1.42x, `draft-mtp` alone 1.62x. So the stack does beat ngram by itself -- it
+just costs you a fifth of what MTP was already giving. Hit rates on novel generation are low, so you pay
 for rejected drafts and the weak drafts displace good ones. The advice online
 that advanced users should combine them is wrong on this box. It may flip for
 output that copies a long input verbatim; it does not help general agentic work.
