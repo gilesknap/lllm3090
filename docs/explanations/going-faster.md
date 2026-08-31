@@ -7,6 +7,11 @@ from 34.9 to 56.6 tok/s, and several further levers have been looked at. This
 page records all of them — what is already in the engine, what was measured and
 set aside, what is waiting on a build, and what is parked and why.
 
+Two of them have since been measured and neither displaced MTP, so the short
+version is that the engine's defaults are already the best combination tried on
+this card. The value in what follows is mostly in why, and in the one variable —
+draft width — that turned out to matter more than the choice of drafter.
+
 ## Two clocks, not one
 
 Every lever below moves exactly one of these, and confusing them wastes a day:
@@ -90,53 +95,68 @@ merged on the 28th. Anything measured on that build reproduces the invalid
 acceptance numbers, so a sweep that matters needs `SWEEP_BUILD` set to a newer
 tag until the pin moves.
 
-## The live candidate: DFlash2
+## Measured and not adopted: DFlash2
 
 [DFlash2](https://inco.ai/blog/dflash2/) is a block-diffusion drafter published
 for this exact target model. It predicts a whole block of tokens per forward
-pass and keeps the top candidates at every position, which is why its acceptance
-length is 5.13–5.39 tokens per verification step where a conventional 0.6B
-drafter manages about 2. Output is unchanged.
+pass and keeps the top candidates at every position, and its published figures
+are large: 2.26× on an RTX PRO 6000 under CUDA, 3.55× on a 36k synthetic sweep,
+1.85× on an M5 Pro. Output is unchanged.
 
-Reported, on the 27B:
+It does not beat the MTP head this engine already uses. Measured here on
+b10715, at llama.cpp's default draft width of 3, against a baseline of
+32.8 / 32.4 / 31.6 tok/s:
 
-| hardware | baseline | DFlash2 | |
+| | prose | code-edit | long-copy |
 |---|---|---|---|
-| RTX PRO 6000, CUDA, LiveCodeBench | 67.97 tok/s | 153.91 tok/s | 2.26× |
-| same, 36k synthetic | | | 3.55× |
-| Apple M5 Pro, Q4_K_M | 10.42 tok/s | | 1.85× |
+| `draft-mtp` | **52.7** (1.61×, 85%) | 52.0 (1.61×, 84%) | **57.0** (1.80×, 100%) |
+| `dflash` | 51.0 (1.55×, 80%) | **54.0** (1.67×, 85%) | 51.3 (1.62×, 86%) |
 
-Read those multipliers carefully. **They are against no speculation at all, and
-this engine already runs MTP.** The number that decides it is DFlash2 against
-56.6 tok/s, not against 34.9 — and the published claim on that narrower
-comparison is correspondingly narrower: DFlash2 beats MTP by 0.52 tokens of
-acceptance length on this model. Nothing has been measured on a 3090 under
-Vulkan either way.
+A win of 4% on code editing, a loss of 3% on prose and 10% on copying — for
+1.1 GB of VRAM that MTP costs nothing for. At 32 KiB/token of q8_0 KV that is
+roughly 36k tokens, taking the dense 27B's session from about 172k to about
+136k. Paying a fifth of the context for a wash is not a trade worth making, so
+the catalogue does not carry it.
 
-**What it costs.** The drafter is a second GGUF —
-[1.1 GB at Q4_K_M](https://huggingface.co/z-lab/Qwen3.8-27B-DFlash2-GGUF),
-2.0 GB at Q8_0 — and the two drafters are alternatives, not additions. At
-32 KiB/token of q8_0 KV, 1.1 GB is roughly 36k tokens, taking the dense 27B's
-session from about 172k to about 136k before the drafter's own cache. Whether
-that trade is worth it is a per-model judgement the catalogue would have to
-carry.
+The published multipliers are not wrong, they are answering a different
+question: they are all against **no speculation at all**, and this engine has
+run MTP since the head was detected automatically. Against that floor, DFlash2's
+own claim was always narrow — 0.52 tokens of acceptance length — and on this
+backend it does not survive.
 
-**What it needs.** `--spec-type` has listed `draft-dflash` since DFlash v1
-landed in July, so the flag being present proves nothing. DFlash2 — the local
-convolution and candidate selector — is
-[PR #27342](https://github.com/ggml-org/llama.cpp/pull/27342), first released in
-build **b10658**; work was still landing at b10715. Invocation:
+### Draft width matters more than which drafter
+
+The first run of this comparison was wrong, in a way worth recording. It swept
+DFlash2 at its published width of 7 against MTP at llama.cpp's default of 3,
+because `--spec-draft-n-max` was set per-config rather than per-sweep. That is
+two variables, and it reads as a verdict on the drafter:
+
+| at width 7 | prose | code-edit | long-copy |
+|---|---|---|---|
+| `draft-mtp` | 41.3 (63%) | 49.4 (71%) | 55.7 (97%) |
+| `dflash` | 43.9 (67%) | 48.2 (70%) | 35.7 (52%) |
+
+Widening from 3 to 7 costs MTP 22% on prose and DFlash2 14%, and acceptance
+falls for both — 85% → 63% and 80% → 67%. **The penalty is the backend's, not
+the drafter's**, which is why the width is now applied to every config by the
+sweep rather than chosen by each. It also means the invocation in DFlash2's own
+README is actively harmful here:
 
 ```
 --spec-type draft-dflash --spec-draft-model DRAFTER.gguf --spec-draft-n-max 7
 ```
 
-llama.cpp defaults that width to 3 and the published figures use 7.
-[Issue #27544](https://github.com/ggml-org/llama.cpp/issues/27544) reports
-speculation throughput collapsing on Vulkan with `-np > 1` and a draft width
-above 8 — confirmed on AMD and Intel, explicitly not on NVIDIA CUDA, untested on
-NVIDIA Vulkan. The dense 27B now runs one slot, so this only bites a caller who
-asks for more.
+Take the default 3 on Vulkan. The engine passes no width at all and therefore
+already gets it.
+
+The one place the drafter really does differ is copying: at width 7 DFlash2's
+acceptance on `long-copy` collapses to 52% while MTP holds 97%. Block drafting
+is worst at exactly the workload where the next tokens are least in doubt.
+
+[Issue #27544](https://github.com/ggml-org/llama.cpp/issues/27544) reports the
+same shape on AMD and Intel above width 8, explicitly not on CUDA. These numbers
+are below that threshold and on NVIDIA, so the effect is wider than the issue
+describes.
 
 ## CUDA instead of Vulkan
 
@@ -158,15 +178,19 @@ the distribution did not ship. Half of that is still true and half has expired:
   llama.cpp's own build documentation describes.
 
 One prediction worth writing down before it is tested, because it is falsifiable
-and cheap to check once a CUDA build exists: **the drafter verdicts above may
-not survive the backend change, and ngram's should move furthest.** Verifying k
-drafted tokens is a batched forward pass — the same work prefill does — and
-prefill is precisely where Vulkan is 3–4× behind here. Prompt-lookup drafts long
-runs where MTP drafts one or two, so it is the config most exposed to weak
-batched compute, and its break-even acceptance should fall further than MTP's.
-Issue #27544, where speculation collapses on Vulkan above a draft width of 8 but
-not on CUDA, points the same way. Nothing has been measured on CUDA to support
-this.
+and cheap to check once a CUDA build exists: **every drafter verdict above may
+change, and the wide-draft ones should change most.** Verifying k drafted tokens
+is a batched forward pass — the same work prefill does — and prefill is
+precisely where Vulkan is 3–4× behind here.
+
+That is no longer only an argument. Widening the draft from 3 to 7 costs both
+drafters throughput *and* acceptance on this backend, which is the signature of
+verification being expensive rather than of drafts being poor, and issue #27544
+reports the same shape on AMD and Intel but explicitly not on CUDA. If the
+penalty is the backend's, a CUDA build should flatten it — which would make
+wider drafts affordable, and would give prompt-lookup, whose whole method is
+drafting long runs, its only plausible route back. Nothing has been measured on
+CUDA to support this.
 
 So the obstacle is no longer *can it build* but *what the project promises*.
 `install-engine` currently downloads a tarball and is done; a CUDA path means
@@ -175,14 +199,19 @@ shipping binaries built here — a different project with a different support
 burden. Worth measuring the gain before deciding, since the gain is the whole
 argument.
 
-## Worth one check: coopmat2
+## Still unanswered: coopmat2
 
-Before any of that, confirm the current Vulkan build is using
-`VK_KHR_cooperative_matrix` version 2 rather than falling back to coopmat1.
-The difference was 2.2× against 4.4× on prefill in the original benchmarks, it
-is driver-gated on NVIDIA, and it is free if it is merely switched off. The
-device line in the engine log at model load says which is in use;
-`--list-devices` does not.
+Whether this build uses `VK_KHR_cooperative_matrix` version 2 or falls back to
+coopmat1 is worth knowing before any of that, because the difference was 2.2×
+against 4.4× on prefill in the original benchmarks and it is free if it is
+merely switched off.
+
+It is also, so far, unmeasurable here. `--list-devices` names the device and not
+the extension, and b10715's server log does not print a `ggml_vulkan:` banner at
+all — 30 KB of load log on this machine contains no mention of the GPU, the
+backend or the matrix cores. The sweep looks for that line and prints it when it
+finds one, which on this build is never. `vulkaninfo` would at least say what
+the driver exposes, and is not installed.
 
 ## Parked
 
@@ -220,12 +249,19 @@ which is the opposite of what the engine lifecycle promises — but it launches
 with the same flags `lllm3090.engine.start` uses, and that correspondence is the
 point. Its `baseline` config is no speculation at all, so MTP appears as a
 config rather than as the floor. Point `SWEEP_DRAFT` at a drafter GGUF to
-include DFlash2:
+include DFlash2, and `SWEEP_NMAX` at a draft width, which applies to every
+config so that a comparison of drafters is not also a comparison of widths:
 
 ```
-SWEEP_DRAFT=~/models/Qwen3.8-27B-DFlash2-Q4_K_M.gguf \
+SWEEP_DRAFT=~/models/.drafters/Qwen3.8-27B-DFlash2-Q4_K_M.gguf \
   dev/spec-sweep.py ~/models/Qwen3.8-27B/Qwen3.8-27B-UD-Q4_K_S.gguf
 ```
+
+Keep a drafter out of the models directory. `catalog.installed` takes the
+alphabetically first non-projector GGUF in each directory, so a drafter dropped
+beside the weights it drafts for would sort ahead of them and quietly become the
+model the panel starts. `~/models/.drafters/` is skipped along with every other
+dot-directory, which is a convention and not yet a guarantee.
 
 It never sweeps the installed engine. Builds to measure are fetched beside it,
 one directory per upstream tag:

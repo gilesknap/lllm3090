@@ -29,7 +29,7 @@ Environment:
 - ``SWEEP_SAMPLES``       timed generations per prompt per config (default 7)
 - ``SWEEP_LOGDIR``        where per-config server logs land (default /tmp)
 - ``SWEEP_DRAFT``         path to a separate drafter GGUF; enables `dflash`
-- ``SWEEP_DFLASH_NMAX``   draft block width for that config (default 7)
+- ``SWEEP_NMAX``          draft width, for every drafter (default llama.cpp's 3)
 
 Not every config applies to every model. `draft-mtp` needs a checkpoint with
 MTP layers, and `dflash` needs a drafter published for that exact target — so a
@@ -65,6 +65,9 @@ ONLY = sys.argv[3].split(",") if len(sys.argv) > 3 else None
 PORT = 1919
 SAMPLES = int(os.environ.get("SWEEP_SAMPLES", "7"))
 LOGDIR = os.environ.get("SWEEP_LOGDIR", "/tmp")
+# Made here rather than at the first open, which is after the first server has
+# already been started and is a half-hour into a run on the second config.
+os.makedirs(LOGDIR, exist_ok=True)
 
 #: A real source file, copied back nearly verbatim. Any few-hundred-line file
 #: will do; this one is checked in and stable. Resolved against the repository
@@ -75,23 +78,28 @@ BIG_FILE = os.path.join(
 
 #: DFlash2 ships as a second GGUF -- a block-diffusion drafter published for one
 #: target model -- so unlike the other configs it needs a file to point at, and
-#: is skipped when there is none. The published width is 7; llama.cpp defaults
-#: to 3, and issue #27544 reports Vulkan trouble above 8.
+#: is skipped when there is none.
 DRAFT = os.environ.get("SWEEP_DRAFT")
-DFLASH_NMAX = os.environ.get("SWEEP_DFLASH_NMAX", "7")
+
+#: How many tokens a drafter proposes per verification step. Applied to every
+#: config, because it is a property of the sweep and not of one drafter: leaving
+#: it to each config's own default meant comparing DFlash2 at its published 7
+#: against MTP at llama.cpp's 3, which is two variables and reads as a verdict
+#: on the drafter. On Vulkan the width alone is worth more than the choice of
+#: drafter -- see docs/explanations/going-faster.md.
+NMAX = os.environ.get("SWEEP_NMAX", "3")
+WIDTH = ["--spec-draft-n-max", NMAX]
 
 CONFIGS = [
     ("baseline", []),
-    ("draft-mtp", ["--spec-type", "draft-mtp"]),
-    ("ngram-cache", ["--spec-type", "ngram-cache"]),
-    ("mtp+ngram", ["--spec-type", "draft-mtp,ngram-cache"]),
+    ("draft-mtp", ["--spec-type", "draft-mtp", *WIDTH]),
+    ("ngram-cache", ["--spec-type", "ngram-cache", *WIDTH]),
+    ("mtp+ngram", ["--spec-type", "draft-mtp,ngram-cache", *WIDTH]),
 ]
 
 if DRAFT:
     CONFIGS.append(("dflash", [
-        "--spec-type", "draft-dflash",
-        "--spec-draft-model", DRAFT,
-        "--spec-draft-n-max", DFLASH_NMAX,
+        "--spec-type", "draft-dflash", "--spec-draft-model", DRAFT, *WIDTH,
     ]))
 
 CODE = """def process(items):
@@ -189,8 +197,9 @@ def probe(*flags):
 
 print(f"model:   {MODEL}")
 print(f"samples: {SAMPLES} timed + 1 discarded warm-up, per prompt per config")
-print(f"drafter: {DRAFT} (n-max {DFLASH_NMAX})" if DRAFT
+print(f"drafter: {DRAFT}" if DRAFT
       else "drafter: none -- set SWEEP_DRAFT to include the dflash config")
+print(f"n-max:   {NMAX} (every drafter, so a config is not also a width)")
 print(f"engine:  {D}")
 print(f"build:   {probe('--version')}")
 # Names the backend -- 'Vulkan0' or 'CUDA0' -- and so distinguishes two runs
