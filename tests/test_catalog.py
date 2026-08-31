@@ -85,18 +85,57 @@ def test_the_driver_reservation_is_taken_off_the_top():
             assert budget <= profile.vram_mib - profile.driver_reserve_mib
 
 
-def test_plan_leaves_room_for_a_subagent():
-    """The default must admit a second conversation, not just a large first one.
+def test_a_split_has_to_earn_its_place():
+    """One long conversation is the default; a split must buy enough to justify it.
 
-    A pool sized for one session is what makes subagents serialise behind their
-    parent and evict its cached prefix.
+    Dividing the pool does not create capacity -- it shortens every
+    conversation and buys concurrency with the difference. So the automatic
+    plan only splits where the total usable context rises by
+    ``config.SLOT_SPLIT_GAIN``, which happens when the model's RoPE ceiling
+    would otherwise strand a large part of the cache.
     """
     for m in catalog.load_catalog():
-        p = catalog.plan(m)
-        assert p.parallel >= 2, f"{m.id} leaves no room for a subagent"
-        # Each slot must still hold an agent harness's system prompt (~40k)
-        # plus room to work.
-        assert p.per_session >= 32768, f"{m.id} gives only {p.per_session} per slot"
+        for desktop in (True, False):
+            f = catalog.fit(m, desktop)
+            if not f.fits:
+                continue
+            p = catalog.plan(m, desktop=desktop)
+            if p.parallel == 1:
+                continue
+            alone = min(f.pool_q8, m.max_ctx)
+            assert f.pool_q8 >= config.SLOT_SPLIT_GAIN * alone, (
+                f"{m.id} (desktop={desktop}) split into {p.parallel} for a pool "
+                f"only {f.pool_q8 / alone:.2f}x what one conversation could use"
+            )
+
+
+def test_a_further_slot_is_never_taken_when_it_costs_more_than_it_recovers():
+    """The slot count is a local optimum, not simply as many as fit.
+
+    Taking every slot the pool allows produces a cliff: past the split
+    threshold a *larger* pool yields a *shorter* conversation, which is how
+    Qwen3.6-35B-A3B ended up offering 256k on a desktop and 184k headless. A
+    further slot is taken only while it recovers more stranded cache than it
+    costs in window.
+    """
+    for m in catalog.load_catalog():
+        for desktop in (True, False):
+            f = catalog.fit(m, desktop)
+            if not f.fits:
+                continue
+            p = catalog.plan(m, desktop=desktop)
+            if p.parallel >= config.MAX_AUTO_PARALLEL:
+                continue
+            nxt = min(m.max_ctx, f.pool_q8 // (p.parallel + 1))
+            nxt = max(1024, (nxt // 1024) * 1024)
+            if nxt <= 1024:
+                continue
+            gained = ((p.parallel + 1) * nxt) / (p.parallel * p.per_session)
+            lost = p.per_session / nxt
+            assert gained <= lost, (
+                f"{m.id} (desktop={desktop}) stopped at {p.parallel} slots but "
+                f"one more would have gained {gained:.2f}x for {lost:.2f}x window"
+            )
 
 
 def test_small_models_get_their_whole_window():
@@ -112,20 +151,23 @@ def test_rope_capped_models_are_given_the_free_slots():
 
     Rope-capping says the *window* is bounded by the architecture rather than by
     VRAM. It does not promise a surplus large enough for another whole slot: a
-    model can afford exactly the default number of full windows and no more, and
-    that is an honest plan rather than a missed opportunity. What must hold is
-    that no slot is short-changed.
+    model can be rope-capped with exactly one window's worth of pool, and that
+    is an honest plan rather than a missed opportunity. What must hold is that
+    no slot is short-changed, and that a whole spare window is never left unused.
     """
     for m in catalog.load_catalog():
+        f = catalog.fit(m)
         p = catalog.plan(m)
         if p.capped_by != "rope":
             continue
-        assert p.parallel >= config.DEFAULT_PARALLEL, (
-            f"{m.id} is rope-capped but cannot seat the default slot count"
-        )
-        assert p.parallel <= config.MAX_AUTO_PARALLEL
         # Free means free: every slot still gets the whole window.
         assert p.per_session == m.max_ctx
+        assert 1 <= p.parallel <= config.MAX_AUTO_PARALLEL
+        affordable = min(f.pool_q8 // m.max_ctx, config.MAX_AUTO_PARALLEL)
+        assert p.parallel == max(1, affordable), (
+            f"{m.id} can seat {affordable} whole windows but was given "
+            f"{p.parallel}"
+        )
 
 
 def test_an_explicit_slot_count_is_honoured_exactly():
@@ -305,13 +347,29 @@ def test_linger_is_reported_honestly_when_it_cannot_be_determined(monkeypatch):
     assert "enable-linger" in msg, "the message must say how to fix it"
 
 
-def test_headless_never_offers_less_than_a_desktop():
-    """Freeing the compositor's VRAM can only add cache, never remove it."""
+def test_headless_never_leaves_you_worse_off_than_a_desktop():
+    """Freeing the compositor's VRAM can only add cache, never remove it.
+
+    The pool is the hard part of that and never regresses. The per-conversation
+    window is allowed to, but only in exchange for more total capacity -- which
+    is the trade the split rule exists to make. ``Qwen3.6-35B-A3B-MTP`` is the
+    live case: headless its pool holds 1.977 windows, so two slots get 259072
+    each against a desktop's single 262144. Three thousand tokens, 1.2%, for
+    twice the capacity.
+
+    What must never happen is a plan that is worse on *both* counts, which is
+    what "more VRAM made it worse" would actually mean. An earlier version of
+    the rule did exactly that -- 256k on a desktop and 184k headless -- by
+    taking every slot the pool allowed.
+    """
     for m in catalog.load_catalog():
         d = catalog.plan(m, desktop=True)
         h = catalog.plan(m, desktop=False)
-        assert h.pool >= d.pool, f"{m.name} claims less with more VRAM free"
-        assert h.per_session >= d.per_session
+        assert h.pool >= d.pool, f"{m.name} claims less cache with more free"
+        assert h.per_session >= d.per_session or h.pool > d.pool, (
+            f"{m.name} gives a shorter conversation headless "
+            f"({h.per_session} vs {d.per_session}) and no more total capacity"
+        )
 
 
 def test_an_unknown_session_is_assumed_to_be_a_desktop(monkeypatch):
@@ -506,3 +564,30 @@ def test_an_unknown_card_is_honest_rather_than_absent(monkeypatch):
     assert p.vram_mib == 49152
     # Fit still works, because capacity is all the arithmetic needs.
     assert all(catalog.fit(m, profile=p).fits for m in catalog.load_catalog())
+
+
+def test_more_slots_than_pages_is_refused_rather_than_overcommitted():
+    """A slot's share is rounded up to a page, so enough slots overrun the pool.
+
+    Ask for more slots than the cache has pages and every slot still gets one,
+    which makes the plan's pool larger than the cache that exists. The engine
+    then starts, allocates, and dies of VRAM exhaustion -- with a plan that
+    looked like any other. Refusing costs nothing and happens before launch.
+    """
+    heavy = catalog.Model(
+        id="h", name="H", repo="x/y", file="y.gguf", size_gb=20.4, kind="dense",
+        params="", kv_kib_per_token=64, max_ctx=262144,
+    )
+    card = hardware.Profile(
+        id="t", name="t", compute_capability="8.6", vram_mib=24576,
+        bandwidth_gbs=0,
+    )
+    pool = catalog.fit(heavy, True, card).pool_q8
+    seatable = pool // 1024
+    assert seatable >= 1, "the fixture must fit at all for this to mean anything"
+
+    ok = catalog.plan(heavy, seatable, desktop=True, profile=card)
+    assert ok.pool <= pool, "a plan may never promise more cache than exists"
+
+    with pytest.raises(ValueError, match="do not fit"):
+        catalog.plan(heavy, seatable + 1, desktop=True, profile=card)

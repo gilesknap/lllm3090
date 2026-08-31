@@ -7,6 +7,8 @@ and simply cannot see.
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from lllm3090 import config, engine
@@ -32,10 +34,18 @@ def fake_engine(tmp_path, monkeypatch):
             return None
 
     def fake_popen(argv, **kw):
-        seen.append(argv)
+        # `--help` is engine.supports() probing the binary's capabilities, not
+        # a launch. Recording it would put it at seen[0] and shift every
+        # assertion in this file by one.
+        if "--help" not in argv:
+            seen.append(argv)
         return FakeProc()
 
     monkeypatch.setattr(engine.subprocess, "Popen", fake_popen)
+    # A stub shell script cannot answer --help, so the probe would say "no" and
+    # suppress every optional flag. Tests that care about the probe set this
+    # themselves; the rest get a binary that understands everything.
+    monkeypatch.setattr(engine, "supports", lambda flag: True)
     model = tmp_path / "model.gguf"
     model.write_bytes(b"GGUF")
     return seen, model, tmp_path
@@ -66,3 +76,26 @@ def test_a_missing_projector_is_refused_before_launch(fake_engine):
     assert not ok
     assert "projector not found" in detail
     assert not seen, "must not launch the engine at all"
+
+
+def test_mtp_is_enabled_from_the_file_not_the_catalogue(tmp_path, monkeypatch):
+    """The flag is added only for a checkpoint that actually carries the head.
+
+    llama.cpp refuses to start with ``--spec-type draft-mtp`` against a
+    checkpoint without one, so a catalogue field claiming MTP would turn a
+    working start into a failed one the moment a repo shipped a build with the
+    head stripped. The file on disk is the only thing that knows.
+    """
+    from lllm3090 import engine, gguf
+
+    plain = tmp_path / "plain.gguf"
+    plain.write_bytes(b"GGUF" + b"\0" * 64)          # unparseable past the magic
+    assert gguf.has_mtp(plain) is False
+
+    missing = tmp_path / "not-here.gguf"
+    assert gguf.has_mtp(missing) is False, "an unreadable file must not add a flag"
+
+    argv = inspect.getsource(engine.start)
+    assert "gguf.has_mtp(model_path)" in argv, (
+        "the flag must be decided from the checkpoint, not from a catalogue field"
+    )

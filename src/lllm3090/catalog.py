@@ -198,24 +198,81 @@ def plan(
     model cannot use -- which is what leaves room for an agent's subagents.
     """
     requested = parallel
-    parallel = parallel or config.DEFAULT_PARALLEL
     f = fit(model, desktop, profile)
     if not f.fits:
-        return Plan(0, parallel, 0, "vram")
+        return Plan(0, requested or config.DEFAULT_PARALLEL, 0, "vram")
 
-    share = f.pool_q8 // parallel
-    if share >= model.max_ctx:
-        # The architecture runs out before the card does. Spare cache cannot be
-        # turned into a longer conversation, so turn it into more of them: hand
-        # out every slot that still gets the full window, up to the automatic
-        # ceiling. An explicit --parallel is honoured as given.
-        if requested is None:
-            affordable = f.pool_q8 // model.max_ctx
-            parallel = max(parallel, min(affordable, config.MAX_AUTO_PARALLEL))
-        return Plan(model.max_ctx * parallel, parallel, model.max_ctx, "rope")
-    # Round the per-session window down to whole pages so the pool divides evenly.
-    share = max(1024, (share // 1024) * 1024)
-    return Plan(share * parallel, parallel, share, "vram")
+    if requested is not None:
+        # An explicit --parallel is an instruction, not a hint: divide the pool
+        # as asked, even where that leaves each slot short of the ceiling.
+        #
+        # Except where the pool cannot seat the request at all. Rounding a
+        # slot's share up to one page to keep it non-zero is what makes that
+        # dangerous: ask for more slots than there are pages and every slot
+        # gets a page anyway, so the plan's pool exceeds the cache that exists
+        # and the engine starts, allocates, and dies of VRAM exhaustion. A
+        # refusal here is the same refusal, before anything is launched.
+        if f.pool_q8 // requested < 1024:
+            raise ValueError(
+                f"{requested} slots do not fit: {model.name} leaves "
+                f"{f.pool_q8} tokens of cache on this card, which is under "
+                f"one 1024-token page each. The most it can seat is "
+                f"{max(1, f.pool_q8 // 1024)}."
+            )
+        share = f.pool_q8 // requested
+        if share >= model.max_ctx:
+            return Plan(
+                model.max_ctx * requested, requested, model.max_ctx, "rope"
+            )
+        share = (share // 1024) * 1024
+        return Plan(share * requested, requested, share, "vram")
+
+    # Automatically: fill one conversation to the model's ceiling, and split
+    # only when refusing to would strand too much of the card.
+    #
+    # The pool is a fixed number of tokens, so splitting it does not create
+    # capacity -- it shortens each conversation and buys concurrency with the
+    # difference. One long conversation is therefore the default. But the
+    # window is bounded by RoPE as well as by VRAM, and past that ceiling the
+    # remaining cache can never become a longer conversation: a pool holding
+    # 2.8 windows would give one full window and strand 1.8 windows of cache.
+    #
+    # So the test is on *total* usable context. If splitting raises it by
+    # ``SLOT_SPLIT_GAIN`` or more, split; otherwise keep the single window and
+    # accept the remainder as unusable. Both halves of that matter -- the first
+    # stops a large surplus going to waste, the second stops a small one from
+    # halving a conversation to reclaim it.
+    def window(slots: int) -> int:
+        """Per-conversation window at this slot count, in whole pages."""
+        return max(1024, (min(model.max_ctx, f.pool_q8 // slots) // 1024) * 1024)
+
+    alone = window(1)
+    slots = 1
+    if f.pool_q8 >= config.SLOT_SPLIT_GAIN * alone:
+        # Worth splitting. How far is a second question, and answering it with
+        # "as far as consumes the whole pool" is wrong: it produces a cliff at
+        # the threshold where a *larger* pool yields a *shorter* conversation.
+        # Qwen3.6-35B-A3B was the case -- 256k on a desktop and 184k headless,
+        # so freeing the compositor's VRAM made the window worse. See
+        # ``test_headless_never_offers_less_than_a_desktop``.
+        #
+        # So take each further slot only while it recovers more cache than it
+        # costs window, proportionally. Muse-Glimmer's third slot recovers 28%
+        # of a stranded pool for 8% of its window and is taken; the A3B's third
+        # recovers 7% for 28% and is not.
+        slots = 2
+        while slots < config.MAX_AUTO_PARALLEL:
+            here, further = window(slots), window(slots + 1)
+            if further <= 1024:
+                break
+            gained = ((slots + 1) * further) / (slots * here)
+            lost = here / further
+            if gained <= lost:
+                break
+            slots += 1
+    share = window(slots)
+    capped = "rope" if share >= model.max_ctx else "vram"
+    return Plan(share * slots, slots, share, capped)
 
 
 def _pages_up(tokens: int) -> int:
@@ -245,7 +302,12 @@ def min_vram_mib(
     """
     if model.max_ctx <= config.AGENT_PROMPT_FLOOR:
         return None
-    parallel = parallel or config.DEFAULT_PARALLEL
+    # One slot, because that is what plan() hands out automatically at the
+    # margin. At the smallest card that works, the pool is smaller than the
+    # model's ceiling, so the whole-window rule grants exactly one conversation
+    # and every byte goes to it. Computing this against two slots would name a
+    # card half again too large -- and it did, until plan() changed under it.
+    parallel = parallel or 1
     # The smallest window that clears the floor, page-aligned the way plan()
     # hands one out, and never more than the architecture can address.
     window = min(model.max_ctx, _pages_up(config.AGENT_PROMPT_FLOOR + 1))
@@ -304,19 +366,25 @@ def launch_plan(name: str, parallel: int | None = None) -> Plan:
     from the panel are the same engine on the same card.
     """
     if parallel is not None and parallel < 1:
-        # Zero would be swallowed by the default below and negative divides the
-        # pool the wrong way, producing a Plan the engine would be started with.
+        # Zero would be swallowed by the fallback below and negative divides
+        # the pool the wrong way, producing a Plan the engine would start with.
         raise ValueError(f"parallel must be at least 1, not {parallel}")
-    parallel = parallel or config.DEFAULT_PARALLEL
     known = next((m for m in load_catalog() if m.name == name), None)
     if known is not None:
+        # Passed through as-is, including None: substituting a default here
+        # would reach plan() as an explicit request and silently disable the
+        # automatic whole-window rule.
         # Whether a desktop is holding VRAM is a property of the machine, not
         # of the front end asking, so it is resolved here rather than at each
         # call site -- otherwise the console and the panel could size the same
         # model differently on the same card.
         return plan(known, parallel, desktop=hardware.graphical())
-    pool = UNKNOWN_MODEL_CTX * parallel
-    return Plan(pool, parallel, UNKNOWN_MODEL_CTX, "default")
+    # An uncatalogued GGUF has no known ceiling, so there is no window to fill
+    # and the whole-window rule has nothing to reason about. It keeps the old
+    # behaviour: a conservative per-slot figure, and enough slots for an agent
+    # and one subagent, which is the safe guess when nothing else is known.
+    slots = parallel or config.DEFAULT_PARALLEL
+    return Plan(UNKNOWN_MODEL_CTX * slots, slots, UNKNOWN_MODEL_CTX, "default")
 
 
 def load_catalog() -> list[Model]:

@@ -7,28 +7,64 @@ Starting a model involves two numbers that are easy to confuse:
   pool divided by the slot count, and by the model's RoPE ceiling.
 
 ```bash
-lllm3090 start Qwen3.8-27B                 # default: 2 slots
-lllm3090 start Qwen3.8-27B --parallel 1    # one conversation, biggest window
+lllm3090 start Qwen3.8-27B                 # automatic: fills the window first
+lllm3090 start Qwen3.8-27B --parallel 2    # room for an agent and one subagent
 lllm3090 start Qwen3.8-27B --parallel 4    # four conversations, quarter each
 lllm3090 start Qwen3.8-27B --ctx 131072    # set the whole pool by hand
 ```
 
-The default is **two**, so an agent and one subagent fit at once. See
-[](../explanations/what-fits.md) for why a pool sized for exactly one
-conversation makes subagents serialise and evict their parent's cached prefix.
+## The automatic rule: fill the window, then split only if it pays
+
+The pool is a fixed number of tokens, so splitting it does not create capacity
+— it shortens every conversation and buys concurrency with the difference. One
+long conversation is therefore the default.
+
+But the window is bounded by the model's **RoPE ceiling** as well as by VRAM,
+and past that ceiling the remaining cache can never become a longer
+conversation. Refusing to split then strands it: a pool holding 2.8 windows
+would give you one full window and waste 1.8 windows of cache.
+
+So the test is on **total** usable context. If splitting raises it by
+`SLOT_SPLIT_GAIN` (**1.5x**, in `config.py`) or more, split;
+otherwise keep the single window and accept the remainder as unusable.
+
+How far to split is a second question, and "as far as consumes the whole pool"
+is the wrong answer — it produces a cliff where a *larger* pool yields a
+*shorter* conversation. `Qwen3.6-35B-A3B` hit exactly that: 256k on a desktop
+and 184k headless, so freeing the compositor's VRAM made the window worse. Each
+further slot is therefore taken only while it recovers more stranded cache than
+it costs in window. Muse-Glimmer's third slot recovers 28% of its pool for 8% of
+its window and is taken; the A3B's third recovers 7% for 28% and is not.
+
+Raise `SLOT_SPLIT_GAIN` to favour one long conversation, lower it to favour
+concurrency.
+
+**If you are running an agent, ask for two.** An agent that spawns subagents
+needs room for more than one conversation: with a single slot the scheduler
+serialises them, and each subagent's prefill evicts the parent's cached prefix,
+so the parent pays a full cold prefill on its next turn. `lllm3090 claude` says
+so when it finds a one-slot engine.
 
 ## What each model gives you
 
-Per-conversation window at each slot count. "(max)" means the model's RoPE
-ceiling was reached and there is spare VRAM that cannot be spent on context:
+Per-conversation window on a 24 GB card with a desktop session running. "(max)"
+means the model's RoPE ceiling was reached:
 
-| model | `--parallel 1` | 2 (default) | 4 |
+| model | automatic | `--parallel 1` | `--parallel 2` |
 |---|---|---|---|
-| Qwen3.8-27B | 203k | 101k | 50k |
-| Qwen3.6-35B-A3B | 256k (max) | 212k | 106k |
-| Qwen3.6-35B-A3B-Q4KS | 122k | 61k | 30k |
-| gpt-oss-20b | 128k (max) | **128k (max), 4 slots** | 128k (max) |
-| Qwen3-8B | 32k (max) | **32k (max), 4 slots** | 32k (max) |
+| Qwen3.8-27B | **168k x1** | 168k | 84k |
+| Qwen3.6-35B-A3B | **256k (max) x1** | 256k (max) | 169k |
+| Qwen3.6-35B-A3B-MTP | **256k (max) x1** | 256k (max) | 148k |
+| Qwen3.6-35B-A3B-Q4KS | **69k x1** | 69k | 34k |
+| gpt-oss-20b | **128k (max) x4** | 128k (max) | 128k (max) |
+| Qwen3-8B | **32k (max) x4** | 32k (max) | 32k (max) |
+| Gemma-4-26B-A4B | **207k x1** | 207k | 103k |
+| Muse-Glimmer-30B | **118k x3** | 128k (max) | 128k (max) |
+| Gemma-4-12B-QAT | **256k (max) x4** | 256k (max) | 256k (max) |
+
+Figures are computed for the detected card, so `lllm3090 models` is authoritative
+on yours; these are the reference 3090's. Running headless returns about 2.4 GiB
+and moves several rows up.
 
 Two rows behave differently from the rest. **`gpt-oss-20b` and `Qwen3-8B` hit
 their architectural ceiling long before they run out of VRAM**, so extra slots

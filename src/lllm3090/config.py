@@ -92,7 +92,7 @@ VISION_WORKSPACE_RESERVE_MIB = 1024
 #: message fails -- and a window only slightly above it leaves no room to work.
 AGENT_PROMPT_FLOOR = 40_000
 
-#: How many conversations must fit at once.
+#: How many conversations an agent harness needs at once.
 #:
 #: The KV cache is a single pool shared by every concurrent request, not a
 #: per-conversation budget. An agent that spawns subagents therefore needs room
@@ -101,7 +101,34 @@ AGENT_PROMPT_FLOOR = 40_000
 #: serialises them -- and the subagent's prefill evicts the parent's cached
 #: prefix, so the parent then pays a full cold prefill on its next turn.
 #: Two is the minimum that keeps a parent and one subagent resident together.
+#:
+#: **This is no longer what ``plan()`` hands out automatically.** It used to
+#: be, which meant every model's window was halved whether or not the second
+#: half was ever used -- the 35B-A3B gave 169k twice on a desktop when one
+#: conversation could have had the full 256k. ``plan()`` now fills the model's
+#: ceiling first and grants a second slot only where it costs nothing (see
+#: :func:`lllm3090.catalog.plan`). This value remains what an agent should ask
+#: for explicitly -- ``lllm3090 start <model> --parallel 2`` -- and what an
+#: uncatalogued GGUF falls back to.
 DEFAULT_PARALLEL = 2
+
+#: How much more total context a split must buy before it is worth taking.
+#:
+#: Filling one conversation to the model's RoPE ceiling is the priority, but it
+#: is not worth stranding the rest of the card to do it. Where the pool is much
+#: larger than the ceiling, refusing to split wastes the difference: a model
+#: whose pool holds 2.8 windows gets one full window and 1.8 windows of cache
+#: that nothing can ever use.
+#:
+#: So a split is taken when it raises *total* usable context by this factor or
+#: more, and the number of slots is then the fewest that consume the whole pool
+#: -- which keeps each window as long as it can be. Below the threshold the
+#: single conversation keeps the ceiling and the remainder is accepted as
+#: unusable, because halving a window to recover a little cache is a bad trade.
+#:
+#: 1.5 is a judgement, not a measurement. Raise it to favour one long
+#: conversation, lower it to favour concurrency.
+SLOT_SPLIT_GAIN = 1.5
 
 #: Ceiling on slots handed out automatically.
 #:

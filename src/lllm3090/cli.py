@@ -638,7 +638,21 @@ def claude(
             "prompt. Expect frequent compaction."
         )
 
-    settings = claude_env(model, int(window), engine.served_slots())
+    slots = engine.served_slots()
+    if slots == 1:
+        # The plan now fills one conversation to the model's ceiling before
+        # opening a second, so a single-slot engine is the normal outcome on a
+        # VRAM-bound model -- and it is exactly the shape that has no room for
+        # a subagent. Said here rather than at start, because this is the one
+        # command that knows a fan-out is about to be attempted.
+        say(
+            "Note: this engine has one slot, so subagents run one at a time and "
+            "each one evicts the parent's cached prefix -- the next parent turn "
+            "then pays a full cold prefill.\nThat is the trade for a full-length "
+            f"conversation. For fan-out instead, restart with: lllm3090 start "
+            f"{model} --parallel {config.DEFAULT_PARALLEL}"
+        )
+    settings = claude_env(model, int(window), slots)
     if print_env:
         # Shell-shaped so it can drive a harness this command does not know
         # about: `eval "$(lllm3090 claude --print-env)"`, then run that tool.
