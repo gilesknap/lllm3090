@@ -221,8 +221,8 @@ project.
 
 **TurboQuant KV cache.** Sub-3-bit KV via randomised Hadamard transforms —
 3.25 bits/value at ~4.9× compression against f16, with quality loss reported as
-negligible, and the dequantisation penalty that rules out q4_0 here designed out
-rather than tolerated. For a model at 64 KiB/token this would be transformative.
+negligible, and with the dequantisation penalty that rules out q4_0 here
+designed out rather than tolerated. For a model at 64 KiB/token this would be transformative.
 It is **not merged**: it exists in several independent forks, CUDA and Metal are
 validated, Vulkan is still in development. Watch
 [discussion #20969](https://github.com/ggml-org/llama.cpp/discussions/20969).
@@ -245,10 +245,12 @@ generation, and the served model checked either side of the run. Three samples
 once made MTP read as no gain at all when it was 1.32×.
 
 That instrument is `dev/spec-sweep.py`. It is a development tool rather than
-part of the installed package — it kills and restarts servers on its own port,
-which is the opposite of what the engine lifecycle promises — but it launches
-with the same flags `lllm3090.engine.start` uses, and that correspondence is the
-point. Its `baseline` config is no speculation at all, so MTP appears as a
+part of the installed package — it starts and stops a server per config, which
+is the opposite of what the engine lifecycle promises — but it launches with the
+same flags `lllm3090.engine.start` uses, and that correspondence is the point.
+It runs on its own port, stops only the servers it started and only by pid, and
+refuses to run at all while the engine is up, since two of them on one card
+measures the contention rather than the model. Its `baseline` config is no speculation at all, so MTP appears as a
 config rather than as the floor. Point `SWEEP_DRAFT` at a drafter GGUF to
 include DFlash2, and `SWEEP_NMAX` at a draft width, which applies to every
 draft-model config so that a comparison of drafters is not also a comparison of
