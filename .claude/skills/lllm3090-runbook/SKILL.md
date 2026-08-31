@@ -63,6 +63,48 @@ replaces the package under the running panel, which then reads the new data
 files with the old classes: it keeps listening and every API call fails, and
 because the process never exits `Restart=on-failure` does not rescue it.
 
+## Building a CUDA engine
+
+Worth **1.31x on prefill and 1.28x on decode** on the 3090, measured against the
+Vulkan build from the same commit -- not the 3-4x this project claimed for a
+year before anyone measured it. A cold 80k prompt goes 118.2 s -> 90.0 s, so two
+minutes is mostly what the card costs to prefill a dense 27B and no backend
+change makes it thirty seconds.
+
+**Ubuntu's own CUDA cannot build it.** 26.04 ships 13.1 in multiverse; glibc
+2.43 declares `rsqrt`/`rsqrtf` `noexcept(true)` and CUDA 13.1 declares them
+bare, so `nvcc` refuses anything including `<math.h>`. CUDA 13.3 tests for glibc
+>= 2.42 and matches (`_NV_RSQRT_SPECIFIER`). Take the toolkit from NVIDIA's
+`ubuntu2604` repo via their `cuda-keyring` package, not from the distribution.
+
+```bash
+git clone --depth 1 --branch <TAG> https://github.com/ggml-org/llama.cpp
+PATH=/usr/local/cuda-13.3/bin:$PATH cmake -S llama.cpp -B build \
+  -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="$(nvidia-smi \
+    --query-gpu=compute_cap --format=csv,noheader | tr -d .)-real" \
+  -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j "$(nproc)" --target llama-server llama-bench
+```
+
+**Derive the architecture, never type it.** `hardware.Profile.compute_capability`
+already carries it, from `nvidia-smi`; the profiles span 8.6, 8.9 and 12.0. A
+`-real` build runs on that architecture *only* -- name the directory for it
+(`engines/b10715-cuda-sm86`) so a card swap fails legibly.
+
+Two things a downloaded build gives you that a compiled one does not: an
+identity (it reports `build 1, commit <sha>`, because a shallow clone has no tag
+history, and nobody attests to the binary), and **~700 MiB of VRAM** -- CUDA
+reports 24125 MiB where Vulkan reports 24822, which `catalog.fit` does not know.
+`LLAMA_CURL=OFF` costs nothing: llama.cpp's `-hf` fetcher is unused here.
+
+## Handing a sudo script to Giles
+
+`fs.protected_regular=2` and `/tmp` is sticky, so **root cannot overwrite a file
+in `/tmp` owned by another user** -- `curl -O` as root fails with exit 23,
+"client returned ERROR on write", after transferring the whole body. Download as
+Giles, elevate only for what needs it. Under `sudo`, `$HOME` is root's, so
+resolve a staged path through `$SUDO_USER`.
+
 ## The commands
 
 ```bash
@@ -73,6 +115,7 @@ lllm3090 stop                      # frees the VRAM; do this before gaming
 lllm3090 status
 lllm3090 claude                    # Claude Code against the local model
 lllm3090 bench <Name>              # llama-bench, and a profile block to contribute
+lllm3090 fetch-engine --build TAG  # a build to measure, beside the install not over it
 ```
 
 The panel at `http://127.0.0.1:8080` does the same and streams the engine log.
@@ -120,20 +163,37 @@ Copy-heavy work is where prompt-lookup does least badly here (0.88x, against
 from 100% to 87%, which is the weak-drafts-displace-good-ones effect made
 visible.
 
-**Measure speculation on a build newer than the pinned one.** The first attempt
-at the above was run on the installed engine and had to be thrown away.
-`cli.LLAMA_BUILD` pins **b10628** (25 August); llama.cpp
-[PR #27812](https://github.com/ggml-org/llama.cpp/pull/27812) merged on the
-28th, 49 commits later, fixing a Vulkan graph optimiser that reordered nodes
-across aliased tensor views so the target accepted draft tokens it had not
-chosen -- wrong output at temperature 0, and *invalid acceptance numbers*. The
-bug **flattered** ngram rather than handicapping it: the same sweep read 0.87x
-at 47% acceptance before the fix and 0.65x at 24% after. CUDA was never
-affected, and this build ships only `libggml-vulkan.so`. Point
-`SWEEP_LLAMA_DIR` at a newer build until the pin moves.
+**A speculation measurement is only as good as the build under it.** The first
+attempt at the above ran on the then-pinned **b10628** and had to be thrown
+away: llama.cpp
+[PR #27812](https://github.com/ggml-org/llama.cpp/pull/27812) fixed a Vulkan
+graph optimiser that reordered nodes across aliased tensor views, so the target
+accepted draft tokens it had not chosen -- wrong output at temperature 0, and
+*invalid acceptance numbers*. The bug **flattered** ngram rather than
+handicapping it: the same sweep read 0.87x at 47% acceptance before the fix and
+0.65x at 24% after. CUDA was never affected. **The pin has since moved to
+b10715**, so the sweep's default and the served engine are the same build again.
+
+**Draft width is a property of the backend, not of the drafter.**
+`--spec-draft-n-max` sizes what any draft *model* proposes per verification
+step; the n-gram modes have their own `--spec-ngram-*` knobs. Comparing two
+drafters at two widths is two variables and reads as a verdict on the drafter --
+that mistake was made and caught. Measured on Qwen3.8-27B, Vulkan, going from
+width 3 to the 7 that DFlash2's README recommends: MTP loses 22% on prose and
+DFlash2 14%, and acceptance falls for both (85% -> 63%, 80% -> 67%). **Take
+llama.cpp's default of 3 on Vulkan**; the engine passes no width and so already
+does. The mechanism is that Vulkan gets nothing from a wider batch -- pp512
+1026.9 against pp4096 1014.0, where CUDA goes 1217.4 -> 1343.8 -- and verifying
+k drafted tokens *is* a batched forward pass. Expect these verdicts to differ on
+CUDA; none of them are settled there.
 
 **A drafter costs VRAM, which is the resource the catalogue defends.** DFlash
 and EAGLE-3 need a separate resident model, so they buy speed with context.
+**DFlash2 was measured and rejected**: against the free MTP head at width 3 it
+is 0.90-1.04x -- a win of 4% on code editing, losses of 3% and 10% on prose and
+copying -- for 1.1 GB, which is ~36k tokens of context, taking the dense 27B
+from 172k to 136k. Its published 2.26-3.55x is against *no speculation at all*,
+which is not the floor here.
 Prefer MTP, which lives inside the checkpoint and costs only its own weights.
 
 **Check whether a checkpoint has the head before downloading a variant:**
@@ -235,10 +295,19 @@ On a single-GPU box the benchmark and the workload are the same machine.
   scaled between cards -- a bandwidth ratio produces a guess that prints like a
   measurement. `lllm3090 bench` is the only way a card gets real numbers.
 
-- **Check the served model before *and* after each run** (`/v1/models`). The
-  engine ignores the `model` field in a request and serves whatever is loaded,
-  so a model switched mid-run produces numbers attributed to the wrong model.
-  This has happened; the run was discarded.
+- **Check the served model before *and* after each run -- via `/props`, not
+  `/v1/models`.** The engine ignores the `model` field in a request and serves
+  whatever is loaded, so a model switched mid-run produces numbers attributed to
+  the wrong model. This has happened; the run was discarded. `/v1/models`
+  reports the `--alias`, which a benchmark harness typically sets to a constant,
+  so it answers the same string whatever is loaded and confirms nothing --
+  `dev/spec-sweep.py` printed `serving: b` for months on end. `/props` carries
+  `model_path`; compare it to the checkpoint you asked for.
+- **The benchmark and the engine must not share the card, or the port.** Two
+  engines on one GPU measures the contention. `dev/spec-sweep.py` runs on
+  `ENGINE_PORT + 2` and refuses to start while the engine answers -- it used to
+  bind 1919 and clear it with `pkill -f "llama-server --model <MODEL>"`, which
+  matches the *installed* engine serving that same checkpoint to somebody.
 - **Cold and warm are different measurements.** The prefix cache means a repeat
   of the same prompt is not a cold prefill. Use a unique prefix (a UUID in the
   text) when you want a genuine cold number.
