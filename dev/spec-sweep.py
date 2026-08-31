@@ -23,7 +23,8 @@ figure in the catalogue is only as good as the instrument that produced it.
 
 Environment:
 
-- ``SWEEP_LLAMA_DIR``     engine to sweep (default the installed one)
+- ``SWEEP_BUILD``         llama.cpp tag to sweep (default the pinned one)
+- ``SWEEP_LLAMA_DIR``     an engine directory, for a build with no tag
 - ``SWEEP_SAMPLES``       timed generations per prompt per config (default 7)
 - ``SWEEP_LOGDIR``        where per-config server logs land (default /tmp)
 - ``SWEEP_DRAFT``         path to a separate drafter GGUF; enables `dflash`
@@ -38,14 +39,25 @@ same backend, so the header records both -- build number, and the device line
 that says whether this is Vulkan or CUDA and which matrix cores it found. A
 table of tokens per second that does not say what produced it is how the last
 set of numbers became untrustworthy.
+
+It never sweeps the *installed* engine. Deciding whether to move the pin means
+running a candidate against the incumbent, so both are fetched to their own
+directories by `lllm3090 fetch-engine` and the install is left to serve.
 """
 import json, os, signal, subprocess, sys, time, urllib.request, uuid
 
-#: Which engine to sweep. Overridable because comparing backends means running
-#: the same sweep against two builds, and editing this file between runs is how
-#: you end up unsure which one produced which table.
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
+from lllm3090 import engines  # noqa: E402
+
+#: Which engine to sweep, by tag. SWEEP_LLAMA_DIR is the escape hatch for a
+#: build that has no tag to name it by -- one compiled here, which is how a
+#: CUDA engine will have to arrive.
+BUILD = os.environ.get("SWEEP_BUILD", engines.LLAMA_BUILD)
 D = os.path.expanduser(
-    os.environ.get("SWEEP_LLAMA_DIR", "~/.local/share/lllm3090/llama.cpp"))
+    os.environ.get("SWEEP_LLAMA_DIR", str(engines.bench_dir(BUILD))))
+if not os.path.exists(f"{D}/llama-server"):
+    sys.exit(f"no engine at {D} -- run: lllm3090 fetch-engine --build {BUILD}")
 MODEL = sys.argv[1]
 TPL = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] else None
 ONLY = sys.argv[3].split(",") if len(sys.argv) > 3 else None

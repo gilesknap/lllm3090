@@ -9,6 +9,7 @@ lllm3090 <command> [options]
 | `doctor` | Check the machine can run the stack; exits non-zero on any failure |
 | `setup [--model-folder PATH]` | Prepare the machine; choose where checkpoints live |
 | `install-engine` | Fetch and checksum-verify the pinned llama.cpp build |
+| `fetch-engine [--build TAG]` | Fetch a build to measure against, beside the install rather than over it |
 | `models` | The catalogue: size, kind, achievable context, state, expected speed |
 | `start <name> [--ctx N] [--parallel N]` | Stop any running engine and start this model |
 | `stop` | Terminate the engine and wait for the VRAM to be released |

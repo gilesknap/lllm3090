@@ -29,7 +29,13 @@ change is only visible in the source it does not need a line here.
   whatever disk it names — the check exists to stop an unconsidered default,
   not to overrule a choice. It will not move existing checkpoints for you; it
   prints the copy-and-verify commands and stops.
-
+- **`lllm3090 fetch-engine --build <tag>`** puts a llama.cpp build beside the
+  installed one instead of over it, so a candidate can be measured against the
+  engine currently serving. Choosing between two builds means running both,
+  which was impossible while the only way to obtain one was to install it.
+  Every fetch is verified: against the digest recorded here for the pinned
+  build, and against the digest GitHub publishes for any other, so a build
+  nobody has pinned yet is checked as strictly as the one that is.
 - **Multi-token prediction is turned on by itself** when a checkpoint carries
   the head. The model drafts its own next tokens and verifies them in one pass;
   measured on the reference 3090, `Qwen3.8-27B` goes from 34.9 to 56.6 tok/s

@@ -20,6 +20,11 @@ MODELS_DIR = _path("LLLM3090_MODELS_DIR", Path.home() / "models")
 STATE_DIR = _path("LLLM3090_STATE_DIR", Path.home() / ".local/state/lllm3090")
 #: The unpacked llama.cpp build.
 LLAMA_DIR = _path("LLLM3090_LLAMA_DIR", Path.home() / ".local/share/lllm3090/llama.cpp")
+#: Builds kept for measurement, one directory per upstream tag. Separate from
+#: LLAMA_DIR because deciding whether to move the pin means running a candidate
+#: against the incumbent, which is impossible if measuring one replaces it.
+ENGINES_DIR = _path(
+    "LLLM3090_ENGINES_DIR", Path.home() / ".local/share/lllm3090/engines")
 
 ENGINE_PORT = int(os.environ.get("LLLM3090_ENGINE_PORT", "1919"))
 PANEL_PORT = int(os.environ.get("LLLM3090_PANEL_PORT", "8080"))

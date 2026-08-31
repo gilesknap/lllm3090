@@ -84,11 +84,11 @@ Stacking remains worse than MTP alone, and the acceptance column says why:
 adding ngram to MTP takes long-copy from 100% acceptance down to 87%. The weak
 drafts displace good ones rather than adding to them.
 
-**The pinned build still predates the fix.** `cli.LLAMA_BUILD` is `b10628`
+**The pinned build still predates the fix.** `engines.LLAMA_BUILD` is `b10628`
 (25 August); [PR #27812](https://github.com/ggml-org/llama.cpp/pull/27812)
-merged on the 28th. Anything measured on the installed engine reproduces the
-invalid acceptance numbers, so a sweep that matters needs `SWEEP_LLAMA_DIR`
-pointed at a newer build until the pin moves.
+merged on the 28th. Anything measured on that build reproduces the invalid
+acceptance numbers, so a sweep that matters needs `SWEEP_BUILD` set to a newer
+tag until the pin moves.
 
 ## The live candidate: DFlash2
 
@@ -227,10 +227,41 @@ SWEEP_DRAFT=~/models/Qwen3.8-27B-DFlash2-Q4_K_M.gguf \
   dev/spec-sweep.py ~/models/Qwen3.8-27B/Qwen3.8-27B-UD-Q4_K_S.gguf
 ```
 
-`SWEEP_LLAMA_DIR` points it at a different engine, which is how a CUDA build
-gets compared against a Vulkan one without editing the script between runs. Take
-both from the same upstream build when doing that, or the comparison is a
-version comparison as well as a backend one. Every run prints the build number
-and the device line it found, because two tables of tokens per second that do
-not say what produced them cannot be compared later — which is precisely how the
-earlier numbers stopped being usable.
+It never sweeps the installed engine. Builds to measure are fetched beside it,
+one directory per upstream tag:
+
+```
+lllm3090 fetch-engine --build b10715
+SWEEP_BUILD=b10715 dev/spec-sweep.py MODEL.gguf
+```
+
+That separation is what makes an upgrade decidable at all: choosing between
+b10628 and b10715 means running both, which is impossible if measuring one
+installs it over the other. `SWEEP_LLAMA_DIR` remains as an escape hatch for a
+build with no tag to name it by — a locally compiled CUDA engine, when that
+happens. Every run prints the build number and the device line it found,
+because two tables of tokens per second that do not say what produced them
+cannot be compared later — which is precisely how the earlier numbers stopped
+being usable.
+
+## What a build has to prove
+
+Every engine this project runs or measures is fetched by tag and verified, and
+the two digests involved are not the same claim.
+
+`engines.LLAMA_SHA256` is recorded in the repository: reviewed in a diff, and
+outside the control of whoever serves the bytes. It is therefore the only check
+that can notice a tag whose asset was replaced after it was pinned — the digest
+GitHub publishes cannot, because it would move with the replacement.
+
+The published digest earns its place elsewhere. It is available for *any* tag
+before the download starts, which is what lets a candidate nobody has pinned yet
+be verified exactly as strictly as the incumbent. So `fetch` checks both where
+both exist, refuses when they disagree, and falls back to the recorded one alone
+when the API is unreachable — it is rate limited unauthenticated, and an install
+that fails because a stranger used the quota is a bad install. Without a
+recorded digest that fallback is not available and the fetch fails instead: an
+unverified build is not worth measuring against.
+
+Promoting a candidate to the pin is then a single mechanical act — commit the
+digest `fetch-engine` printed.
