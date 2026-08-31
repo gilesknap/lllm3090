@@ -8,6 +8,7 @@ API reference
 
    lllm3090.config
    lllm3090.hardware
+   lllm3090.storage
    lllm3090.catalog
    lllm3090.gguf
    lllm3090.sweep
