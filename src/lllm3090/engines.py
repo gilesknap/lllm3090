@@ -22,12 +22,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tarfile
 import tempfile
 import urllib.error
 import urllib.request
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import config
@@ -245,3 +248,274 @@ def backend(directory: Path | None = None) -> str:
         return CPU
     _BACKENDS[key] = _backend_from_devices(text)
     return _BACKENDS[key]
+
+
+# ---------------------------------------------------------------------------
+# Building a CUDA engine, because nobody publishes one
+# ---------------------------------------------------------------------------
+# Everything above this line downloads a build and proves it is the build it
+# claims to be. None of that is available here: as of b10715 llama.cpp
+# publishes CUDA archives for Windows only, so on Linux a CUDA engine is
+# something this machine compiles or does not have.
+#
+# That is a weaker promise and it is deliberately kept visible. A downloaded
+# build is a tag and a digest recorded in this repository; a compiled one
+# reports "build 1, commit <sha>" -- a shallow clone has no tag history, so
+# only the commit is real and nobody attests to the binary. Which is why
+# nothing here ever switches the active engine: the user makes that promise,
+# not `setup`.
+
+#: The longest pool of the dense 27B each backend will actually hold, found by
+#: loading until it dies, with a desktop session running. Vulkan dies at 204800
+#: and CUDA at 176128.
+#:
+#: These are what makes "CUDA costs context" a number rather than an
+#: impression: it is ~10% more KV per token plus ~230 MiB more fixed overhead,
+#: and it lands as about a seventh of the window. Recorded here, together, so
+#: that the figure `setup` quotes and the figure the planner would use cannot
+#: drift apart -- and so re-measuring is one edit.
+VULKAN_CEILING = 200704
+CUDA_CEILING = 172032
+
+
+def cuda_window_cost() -> int:
+    """What choosing CUDA costs in window, as a whole percent."""
+    return round(100 * (VULKAN_CEILING - CUDA_CEILING) / VULKAN_CEILING)
+
+
+#: The oldest CUDA that can compile this against a current glibc.
+#:
+#: Not a preference. Ubuntu 26.04 ships 13.1 in multiverse, and it declares
+#: ``rsqrt``/``rsqrtf`` without an exception specifier while glibc 2.43
+#: declares them ``noexcept(true)``; ``nvcc`` then refuses to compile anything
+#: that includes ``<math.h>``, which is everything. 13.3 tests for glibc >= 2.42
+#: and matches it. So the toolkit has to come from NVIDIA's own repository, and
+#: a machine with both installed must not be allowed to pick the older one --
+#: which is exactly what ``/usr/local/cuda`` does when alternatives points
+#: there.
+MIN_CUDA = (13, 3)
+
+#: Where llama.cpp is cloned from to build it. The same project the pinned
+#: archives come from, checked out at the same tag, so a locally built engine
+#: is the pinned build compiled differently rather than a different engine.
+SOURCE_REPO = "https://github.com/ggml-org/llama.cpp.git"
+
+#: What is worth compiling. The server is the product; bench and cli are what
+#: make a locally built engine measurable against a downloaded one, which is
+#: the only way anyone can check the claim that it is faster.
+BUILD_TARGETS = ("llama-server", "llama-bench", "llama-cli")
+
+#: What to tell someone who has no usable toolkit.
+#:
+#: Printed rather than executed. This is 4-6 GB of packages from a third-party
+#: repository, and installing that behind someone's back -- during a command
+#: whose job is to get a Vulkan engine working -- is not a reasonable reading
+#: of "setup".
+TOOLKIT_INSTRUCTIONS = """\
+  wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2604/\
+x86_64/cuda-keyring_1.1-1_all.deb
+  sudo dpkg -i cuda-keyring_1.1-1_all.deb
+  sudo apt-get update
+  sudo apt-get install -y cuda-toolkit-13-3
+
+Not `apt install nvidia-cuda-toolkit`. The distribution's 13.1 cannot compile
+this against glibc 2.43 -- it declares rsqrt/rsqrtf without an exception
+specifier where glibc declares them noexcept(true), and nvcc then refuses
+every file that includes <math.h>."""
+
+
+@dataclass(frozen=True)
+class Toolkit:
+    """An ``nvcc`` on this machine, and whether it is new enough to be used."""
+
+    nvcc: Path
+    version: tuple[int, ...]
+
+    @property
+    def text(self) -> str:
+        return ".".join(str(part) for part in self.version)
+
+    @property
+    def usable(self) -> bool:
+        return self.version >= MIN_CUDA
+
+
+def _nvcc_version(nvcc: Path) -> tuple[int, ...] | None:
+    """The release ``nvcc`` reports, as comparable numbers, or None."""
+    try:
+        out = subprocess.run(
+            [str(nvcc), "--version"],
+            capture_output=True, text=True, timeout=30, check=False,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    found = re.search(r"release (\d+)\.(\d+)", out)
+    return tuple(int(g) for g in found.groups()) if found else None
+
+
+def toolkits() -> list[Toolkit]:
+    """Every CUDA toolkit findable on this machine, newest first.
+
+    Both the ``PATH`` and ``/usr/local`` are searched, and ``/usr/local/cuda``
+    is deliberately *not* trusted as the answer: it is a symlink managed by
+    alternatives, and on a machine with 13.1 and 13.3 installed it points at
+    whichever one was configured last. Picking the newest that works is the
+    only reading of "a CUDA toolkit is present" that cannot pick the one this
+    cannot be built with.
+    """
+    found: dict[Path, Toolkit] = {}
+    candidates = []
+    on_path = shutil.which("nvcc")
+    if on_path:
+        candidates.append(Path(on_path))
+    candidates += sorted(Path("/usr/local").glob("cuda*/bin/nvcc"))
+    for nvcc in candidates:
+        real = nvcc.resolve()
+        if real in found:
+            continue
+        version = _nvcc_version(real)
+        if version is not None:
+            found[real] = Toolkit(real, version)
+    return sorted(found.values(), key=lambda t: t.version, reverse=True)
+
+
+def toolkit() -> Toolkit | None:
+    """The newest toolkit that can actually compile this, or None."""
+    return next((t for t in toolkits() if t.usable), None)
+
+
+def sm(compute_capability: str) -> str | None:
+    """A compute capability as CUDA spells an architecture: ``8.6`` -> ``86``.
+
+    ``None`` for a card that would not report one. Derived from what
+    ``nvidia-smi`` says rather than typed anywhere, because a hand-written
+    architecture is a number that goes stale in a machine the moment its card
+    is replaced -- and the binary it produces does not fail, it runs wrong.
+    """
+    parts = compute_capability.split(".")
+    if len(parts) != 2 or not all(p.isdigit() for p in parts):
+        return None
+    return f"{int(parts[0])}{int(parts[1])}"
+
+
+def cuda_dir(build: str, arch: str) -> Path:
+    """Where a CUDA build for one architecture lives.
+
+    The architecture is in the name on purpose. The build is compiled
+    ``sm_<arch>-real``, which will not run on a different architecture at all,
+    so naming the directory after the tag alone would let a card swap turn into
+    an engine that dies at load for no stated reason. Named this way, the
+    absence is legible: the directory for the new card simply is not there.
+    """
+    return config.ENGINES_DIR / f"{build}-cuda-sm{arch}"
+
+
+def cuda_builds() -> list[Path]:
+    """Every locally compiled CUDA engine on this machine."""
+    if not config.ENGINES_DIR.is_dir():
+        return []
+    return sorted(
+        d for d in config.ENGINES_DIR.iterdir()
+        if d.is_dir() and "-cuda-sm" in d.name and (d / "llama-server").exists()
+    )
+
+
+def stale_cuda_builds(build: str | None = None) -> list[Path]:
+    """Locally compiled engines that are no longer the pinned build.
+
+    The most likely way this feature rots. A CUDA engine is tied to the commit
+    it was compiled from, and moving ``LLAMA_BUILD`` does not move it -- so a
+    user who chose CUDA is silently left on an older engine than the one every
+    figure in the catalogue was measured against, with nothing to say so.
+    """
+    build = build or LLAMA_BUILD
+    return [d for d in cuda_builds() if not d.name.startswith(f"{build}-cuda-sm")]
+
+
+def build_cuda(
+    target: Path,
+    arch: str,
+    kit: Toolkit,
+    build: str | None = None,
+    log: Path | None = None,
+    on_progress: Callable[[str], None] | None = None,
+) -> Path:
+    """Compile a CUDA llama-server for one architecture. Returns ``target``.
+
+    Checked out at the pinned tag, so this is the shipped build compiled
+    differently rather than a different engine. Built into a temporary
+    directory and copied into place only once the binary exists, because a
+    half-populated engine directory is indistinguishable from a complete one
+    and would be launched as though it were.
+    """
+    build = build or LLAMA_BUILD
+    log = log or (config.STATE_DIR / "build-cuda.log")
+    log.parent.mkdir(parents=True, exist_ok=True)
+    for tool in ("git", "cmake"):
+        if not shutil.which(tool):
+            raise BuildError(f"{tool} is not installed; it is needed to build CUDA")
+
+    def run(argv: list[str], cwd: Path | None = None) -> None:
+        with log.open("a") as sink:
+            sink.write(f"\n$ {' '.join(argv)}\n")
+            sink.flush()
+            proc = subprocess.Popen(
+                argv, cwd=cwd, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True,
+            )
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                sink.write(line)
+                # cmake's own percentage, and nothing else. A compile prints
+                # tens of thousands of lines and none of the others answer the
+                # only question anyone has while waiting.
+                if on_progress and re.match(r"\[\s*\d+%\]", line):
+                    on_progress(line.rstrip())
+            if proc.wait() != 0:
+                raise BuildError(
+                    f"{argv[0]} failed while building CUDA. The full output is "
+                    f"in {log}"
+                )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "llama.cpp"
+        run([
+            "git", "clone", "--depth", "1", "--branch", build,
+            SOURCE_REPO, str(source),
+        ])
+        run([
+            "cmake", "-S", str(source), "-B", str(source / "build"),
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DGGML_CUDA=ON",
+            # -real, not -virtual: no PTX is embedded, so the binary runs on
+            # this architecture and refuses every other one rather than
+            # silently JIT-compiling itself onto a card it was not measured on.
+            f"-DCMAKE_CUDA_ARCHITECTURES={arch}-real",
+            f"-DCMAKE_CUDA_COMPILER={kit.nvcc}",
+            # Nothing here downloads models through the engine, and libcurl's
+            # headers are one more thing that has to be installed to build.
+            "-DLLAMA_CURL=OFF",
+            "-DLLAMA_BUILD_TESTS=OFF",
+            "-DLLAMA_BUILD_EXAMPLES=OFF",
+        ])
+        run([
+            "cmake", "--build", str(source / "build"), "--config", "Release",
+            "-j", str(os.cpu_count() or 4), "--target", *BUILD_TARGETS,
+        ])
+        binaries = source / "build" / "bin"
+        if not (binaries / "llama-server").exists():
+            raise BuildError(
+                f"the build finished but produced no llama-server. See {log}"
+            )
+        if target.exists():
+            shutil.rmtree(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Everything, not just the binaries: the engine is launched with
+        # LD_LIBRARY_PATH pointing at this directory, and libggml-cuda.so lives
+        # beside llama-server exactly as it does in a downloaded archive.
+        shutil.copytree(binaries, target)
+    for binary in BUILD_TARGETS:
+        path = target / binary
+        if path.exists():
+            path.chmod(0o755)
+    return target

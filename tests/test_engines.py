@@ -14,6 +14,7 @@ import os
 import subprocess
 import tarfile
 import urllib.error
+from pathlib import Path
 
 import pytest
 
@@ -295,3 +296,142 @@ def test_the_real_engines_on_this_box_identify_themselves(build, want):
     if not (directory / "llama-server").exists():
         pytest.skip(f"{build} is not installed on this machine")
     assert engines.backend(directory) == want
+
+
+# ---------------------------------------------------------------------------
+# Building a CUDA engine
+# ---------------------------------------------------------------------------
+
+
+def test_a_toolkit_too_old_to_build_this_is_not_usable():
+    """Ubuntu 26.04 ships 13.1, and it cannot compile this against glibc 2.43:
+    it declares rsqrt/rsqrtf without an exception specifier where glibc
+    declares them noexcept(true), so nvcc refuses every file including
+    <math.h>. Offering it would waste a download and fail at the first file."""
+    assert not engines.Toolkit(Path("/usr/local/cuda-13.1/bin/nvcc"), (13, 1)).usable
+    assert engines.Toolkit(Path("/usr/local/cuda-13.3/bin/nvcc"), (13, 3)).usable
+    assert engines.Toolkit(Path("/usr/local/cuda-14.0/bin/nvcc"), (14, 0)).usable
+
+
+def test_the_newest_usable_toolkit_is_the_one_chosen(monkeypatch):
+    """A machine can have several. /usr/local/cuda is an alternatives symlink
+    and points at whichever was configured last, so it is not the answer."""
+    monkeypatch.setattr(engines, "toolkits", lambda: [
+        engines.Toolkit(Path("/usr/local/cuda-14.0/bin/nvcc"), (14, 0)),
+        engines.Toolkit(Path("/usr/local/cuda-13.3/bin/nvcc"), (13, 3)),
+        engines.Toolkit(Path("/usr/local/cuda-13.1/bin/nvcc"), (13, 1)),
+    ])
+    assert engines.toolkit().version == (14, 0)
+
+
+def test_only_an_old_toolkit_is_the_same_as_none(monkeypatch):
+    """Answering "yes there is one" here starts a build that cannot finish."""
+    monkeypatch.setattr(engines, "toolkits", lambda: [
+        engines.Toolkit(Path("/usr/local/cuda-13.1/bin/nvcc"), (13, 1)),
+    ])
+    assert engines.toolkit() is None
+
+
+@pytest.mark.parametrize("capability,want", [
+    ("8.6", "86"), ("12.0", "120"), ("7.5", "75"),
+    ("unknown", None), ("", None), ("8", None),
+])
+def test_an_architecture_is_derived_from_the_card_or_not_at_all(capability, want):
+    assert engines.sm(capability) == want
+
+
+def test_the_directory_names_the_architecture_it_was_built_for(monkeypatch, tmp_path):
+    """The binary is compiled sm_<arch>-real and will not run on another
+    architecture at all. Named after the tag alone, a card swap would be an
+    engine that dies at load for no stated reason; named this way the absence
+    is legible."""
+    monkeypatch.setattr(config, "ENGINES_DIR", tmp_path)
+    assert engines.cuda_dir("b10715", "86").name == "b10715-cuda-sm86"
+    assert engines.cuda_dir("b10715", "120").name == "b10715-cuda-sm120"
+
+
+def _built(root, name):
+    directory = root / name
+    directory.mkdir(parents=True)
+    (directory / "llama-server").write_text("#!/bin/sh\n")
+    return directory
+
+
+def test_a_pin_move_orphans_a_cuda_build_and_something_has_to_notice(
+    monkeypatch, tmp_path
+):
+    """The most likely way this feature rots. A CUDA engine is tied to the
+    commit it was compiled from, and moving LLAMA_BUILD does not move it, so
+    an upgrade silently leaves a CUDA user on an older engine than everything
+    in the catalogue was measured against."""
+    monkeypatch.setattr(config, "ENGINES_DIR", tmp_path)
+    _built(tmp_path, "b10715-cuda-sm86")
+    monkeypatch.setattr(engines, "LLAMA_BUILD", "b10715")
+    assert engines.stale_cuda_builds() == []
+    monkeypatch.setattr(engines, "LLAMA_BUILD", "b10900")
+    assert [p.name for p in engines.stale_cuda_builds()] == ["b10715-cuda-sm86"]
+
+
+def test_a_downloaded_build_is_not_mistaken_for_a_compiled_one(monkeypatch, tmp_path):
+    """`fetch-engine` puts tags in the same directory. Only the compiled ones
+    can go stale in the way above -- a downloaded one is re-fetched by tag."""
+    monkeypatch.setattr(config, "ENGINES_DIR", tmp_path)
+    _built(tmp_path, "b10628")
+    _built(tmp_path, "b10715-cuda-sm86")
+    assert [p.name for p in engines.cuda_builds()] == ["b10715-cuda-sm86"]
+
+
+def test_a_half_built_directory_is_not_left_where_an_engine_goes(
+    monkeypatch, tmp_path
+):
+    """A directory holding some of an engine is indistinguishable from one
+    holding all of it, and would be launched as though it were complete."""
+    monkeypatch.setattr(config, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(engines.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+
+    class Silent:
+        stdout = iter(())
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(engines.subprocess, "Popen", lambda *a, **kw: Silent())
+    target = tmp_path / "engine"
+    with pytest.raises(engines.BuildError, match="no llama-server"):
+        engines.build_cuda(target, "86", engines.Toolkit(Path("nvcc"), (13, 3)))
+    assert not target.exists()
+
+
+def test_a_build_without_the_tools_to_do_it_fails_before_the_clone(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(config, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(engines.shutil, "which", lambda tool: None)
+    with pytest.raises(engines.BuildError, match="cmake|git"):
+        engines.build_cuda(
+            tmp_path / "engine", "86", engines.Toolkit(Path("nvcc"), (13, 3))
+        )
+
+
+def test_what_cuda_costs_in_window_is_derived_from_the_two_ceilings():
+    """So the figure `setup` quotes and the figure a planner would use cannot
+    drift apart, and re-measuring is one edit."""
+    assert engines.CUDA_CEILING < engines.VULKAN_CEILING
+    assert engines.cuda_window_cost() == 14
+
+
+def test_the_real_toolkits_on_this_box_are_ranked_correctly():
+    """The only test here that runs a real nvcc.
+
+    This machine has 13.1 and 13.3 installed and nvcc is on neither PATH nor
+    reliably at /usr/local/cuda -- which is the exact shape the search exists
+    for. Skipped everywhere else, CI included.
+    """
+    found = engines.toolkits()
+    if not found:
+        pytest.skip("no CUDA toolkit on this machine")
+    assert found == sorted(found, key=lambda t: t.version, reverse=True)
+    chosen = engines.toolkit()
+    if chosen is not None:
+        assert chosen.version >= engines.MIN_CUDA
+        assert chosen.nvcc.exists()

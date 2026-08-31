@@ -10,8 +10,9 @@ lllm3090 <command> [options]
 | `setup [--model-folder PATH]` | Prepare the machine; choose where checkpoints live |
 | `install-engine` | Fetch and checksum-verify the pinned llama.cpp build |
 | `fetch-engine [--build TAG]` | Fetch a build to measure against, beside the install rather than over it |
+| `build-cuda [--force]` | Compile a CUDA engine for this card, beside the installed one. Never switches to it |
 | `models` | The catalogue: size, kind, achievable context, state, expected speed |
-| `start <name> [--ctx N] [--parallel N]` | Stop any running engine and start this model |
+| `start <name> [--ctx N] [--parallel N] [--profile P]` | Stop any running engine and start this model |
 | `stop` | Terminate the engine and wait for the VRAM to be released |
 | `bench <name>` | Benchmark a model and print a profile block to contribute |
 | `sweep [--gpu ID] [--limit N] [--yaml] [--skipped]` | Survey published GGUF models and price them against a card |
@@ -34,6 +35,23 @@ detected card. It never produces a speed — `bench` is what does that.
 as much as it can up to the model's RoPE ceiling. `--ctx` overrides the whole
 pool; an unknown GGUF gets a conservative 32768 per slot. Anything after `claude` is passed
 through to Claude Code unchanged.
+
+`--profile` picks what the engine guesses ahead with. The default is
+multi-token prediction alone at the engine's own draft width, which is what
+serves when nothing is asked for. `--profile copy` adds prompt-lookup drafting
+and widens the draft to 7, taking the dense 27B from 94.0 to 115.1 tok/s on
+copy-heavy work — and it is **refused on Vulkan**, where the same configuration
+loses. The verdicts genuinely invert between backends, because verifying a
+draft is a batched forward pass and Vulkan gets nothing from a wider batch; see
+[](../explanations/going-faster.md).
+
+`build-cuda` compiles llama.cpp at the pinned tag with CUDA, into
+`engines/<tag>-cuda-sm<arch>` where the architecture comes from `nvidia-smi`
+rather than from anything typed. It needs CUDA 13.3 or newer — not the
+distribution's 13.1 — and prints NVIDIA's repository instructions when there is
+none. It never replaces the installed engine: point `LLLM3090_LLAMA_DIR` at the
+result to use it. `setup` offers the same build when it finds a usable toolkit,
+and never builds unprompted, `--yes` included.
 
 `claude --print-env` writes the environment as `export` lines and nothing else
 to stdout, so `eval "$(lllm3090 claude --print-env)"` sets up a shell for a

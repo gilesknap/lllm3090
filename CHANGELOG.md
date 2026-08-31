@@ -12,6 +12,38 @@ change is only visible in the source it does not need a line here.
 
 ### Added
 
+- **`lllm3090 build-cuda`, and a `setup` that offers it.** llama.cpp publishes
+  CUDA archives for Windows only, so on Linux a CUDA engine is something the
+  machine compiles or does not have. It is worth compiling: on the dense 27B,
+  CUDA plus multi-token prediction measures **1.55–1.60×** the Vulkan engine
+  that installs by default, and **1.93×** on copy-heavy work with
+  `--profile copy`.
+
+  Nothing about the default install changes. Vulkan is still what arrives, as
+  one download verified against a digest recorded in the repository, and it
+  keeps serving after a CUDA build exists — point `LLLM3090_LLAMA_DIR` at the
+  build to use it. That is deliberate: a compiled binary reports `build 1,
+  commit <sha>` and nobody attests to it, which is a different promise from a
+  verified download, and it is the user's to make rather than `setup`'s.
+
+  `setup` states the costs before asking — the compile, the disk, and **about
+  14% of the context window**, since the dense 27B holds 196k tokens on Vulkan
+  and 168k on CUDA. It never builds unprompted, `--yes` included, and a re-run
+  finds the existing build rather than repeating it.
+
+  The toolkit is detected, never installed: that is 4–6 GB from a third-party
+  repository. It must be **CUDA 13.3 or newer** and specifically not Ubuntu
+  26.04's 13.1, which declares `rsqrt`/`rsqrtf` without an exception specifier
+  where glibc 2.43 declares them `noexcept(true)`, at which point `nvcc`
+  refuses every file that includes `<math.h>`. Both are commonly installed
+  side by side and `/usr/local/cuda` points at whichever was configured last,
+  so the newest usable one is chosen rather than whatever that symlink says.
+- **`lllm3090 doctor` now names the backend that would actually serve**, and
+  fails when a compiled CUDA engine is older than the pinned build. A CUDA
+  engine is tied to the commit it was compiled from and an upgrade does not
+  move it, so without this a CUDA user is silently left on an older engine than
+  every figure in the catalogue was measured against.
+
 - **`lllm3090 start <model> --profile copy`** asks the engine to guess ahead
   more aggressively, for a session that is mostly reproducing its input. On
   CUDA it takes the dense 27B's copy-heavy figure from 94.0 to 115.1 tok/s. It
