@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import getpass
 import hashlib
 import os
 import pathlib
@@ -17,7 +18,7 @@ from pathlib import Path
 
 import typer
 
-from . import catalog, config, engine, hardware, preflight
+from . import catalog, config, engine, hardware, preflight, storage
 from ._version import __version__
 
 # The engine build is pinned, not tracked. "Latest" would silently change the
@@ -377,10 +378,137 @@ def _apt_missing() -> list[str]:
     return missing
 
 
+def _whoami() -> str:
+    """The current user's name, without a terminal to ask for one.
+
+    ``os.getlogin`` reads the controlling terminal and raises ``OSError``
+    without one -- in a service, a pipeline, or an agent session. It would do so
+    while printing the command that recovers from a permission error, which is
+    the worst possible moment to raise instead of speaking.
+    """
+    try:
+        return getpass.getuser()
+    except Exception:
+        return os.environ.get("USER") or os.environ.get("LOGNAME") or "$USER"
+
+
+def _checkpoints_under(path: Path) -> Path | None:
+    """Where ``path`` leads, if anything is stored there, else ``None``.
+
+    Follows a symlink deliberately. ``~/models`` is a symlink on any machine
+    that has already been through ``--model-folder``, and repointing one that
+    leads to 180 GB does not delete anything -- it makes it invisible, while the
+    disk stays full. That is a worse failure than deleting, because nothing
+    reports it.
+    """
+    if not path.exists():
+        return None
+    resolved = path.resolve()
+    if not resolved.is_dir():
+        return None
+    return resolved if any(resolved.iterdir()) else None
+
+
+def _configure_models_folder(requested: str | None) -> None:
+    """Settle where checkpoints live, before anything is downloaded into it.
+
+    Asked here because it is the last moment the answer is cheap. Once there
+    are 180 GB in the wrong place, changing it means copying them.
+
+    An explicit ``--model-folder`` is honoured whatever disk it lands on -- the
+    check exists to stop an unconsidered default, not to overrule a decision.
+    """
+    default = config.MODELS_DIR
+    if requested is None:
+        warning = storage.slow_disk_warning(default)
+        if warning is None:
+            disk = storage.backing_disk(default)
+            where = f" on /dev/{disk}" if disk else ""
+            _echo_check(
+                "models dir", True,
+                f"{default}{where} ({storage.free_gb(default):.0f} GB free)",
+            )
+            return
+        _echo_check("models dir", False, f"{default} is not on an NVMe")
+        typer.echo("\n" + warning)
+        raise typer.Exit(1)
+
+    # Absolute from here on: symlink_to() stores what it is given, so a
+    # relative --model-folder would be resolved against ~/ and
+    # `--model-folder models` would point ~/models at itself.
+    target = Path(requested).expanduser().absolute()
+    if not target.exists():
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            typer.echo(
+                f"\nCannot create {target}: its parent belongs to another user.\n"
+                f"Create it once, then re-run this command:\n\n"
+                f"    sudo mkdir -p {target} && sudo chown {_whoami()} {target}\n"
+            )
+            raise typer.Exit(1) from None
+    if not target.is_dir():
+        typer.echo(f"\n{target} exists and is not a directory.")
+        raise typer.Exit(1)
+    if not os.access(target, os.W_OK):
+        typer.echo(
+            f"\n{target} exists but you cannot write to it. Give it to yourself:\n\n"
+            f"    sudo chown {_whoami()} {target}\n"
+        )
+        raise typer.Exit(1)
+
+    disk = storage.backing_disk(target)
+    where = f" on /dev/{disk}" if disk else ""
+    already_there = (
+        default.exists() and target.resolve() == default.resolve()
+    ) or target == default
+    if already_there:
+        _echo_check("models dir", True, f"{target}{where}")
+        return
+
+    # Everything else in the project reads config.MODELS_DIR, which defaults to
+    # ~/models. A symlink there means the choice needs no environment variable,
+    # no edit to the service unit, and nothing to remember on the next upgrade.
+    #
+    # Whatever is there now, it is only safe to replace when it holds nothing.
+    # A symlink counts: repointing one that leads to 180 GB of checkpoints does
+    # not delete them, but it does make them invisible to every part of this
+    # program, which is worse -- the disk stays full and the models are gone.
+    holding = _checkpoints_under(default)
+    if holding is not None:
+        typer.echo(
+            f"\n{default} already leads to checkpoints in {holding}, and setup "
+            f"will not move them for you.\nCopy them, verify, then swap the "
+            f"symlink in:\n\n"
+            f"    rsync -a --info=progress2 {holding}/ {target}/\n"
+            f"    rsync -acn {holding}/ {target}/     # must print nothing\n"
+            f"    rm {default} && ln -s {target} {default}\n"
+            if default.is_symlink() else
+            f"\n{default} already holds checkpoints, and setup will not move "
+            f"them for you.\nCopy them, verify, then swap the symlink in:\n\n"
+            f"    rsync -a --info=progress2 {holding}/ {target}/\n"
+            f"    rsync -acn {holding}/ {target}/     # must print nothing\n"
+            f"    mv {default} {default}.old && ln -s {target} {default}\n"
+        )
+        raise typer.Exit(1)
+    if default.is_symlink():
+        default.unlink()
+    elif default.is_dir():
+        default.rmdir()
+    default.parent.mkdir(parents=True, exist_ok=True)
+    default.symlink_to(target.resolve())
+    _echo_check("models dir", True, f"{default} -> {target}{where}")
+
+
 @app.command()
 def setup(
     yes: bool = typer.Option(False, "--yes", "-y", help="Do not prompt."),
     service: bool = typer.Option(True, help="Install and start the user service."),
+    model_folder: str | None = typer.Option(
+        None, "--model-folder",
+        help="Where checkpoints live. Symlinked from ~/models, so nothing else "
+             "needs to know. Honoured whatever disk it is on.",
+    ),
 ) -> None:
     """Prepare this machine: system packages, engine, and the panel service.
 
@@ -407,7 +535,13 @@ def setup(
         else:
             raise typer.Exit(1)
 
-    # 2. System packages. Only what the engine actually needs -- uv brings its
+    # 2. Where the checkpoints go, before anything is downloaded into it.
+    #    Asked here because it is the last moment the answer is cheap: once
+    #    there are 180 GB in the wrong place, changing it means copying them.
+    typer.echo("")
+    _configure_models_folder(model_folder)
+
+    # 3. System packages. Only what the engine actually needs -- uv brings its
     #    own Python, so there is no python3-venv to install.
     missing = _apt_missing()
     if missing:
@@ -426,11 +560,11 @@ def setup(
     if not ok:
         raise typer.Exit(1)
 
-    # 3. The engine.
+    # 4. The engine.
     typer.echo("")
     install_engine(force=False)
 
-    # 4. The panel.
+    # 5. The panel.
     if service:
         typer.echo("")
         install_service(enable=True)

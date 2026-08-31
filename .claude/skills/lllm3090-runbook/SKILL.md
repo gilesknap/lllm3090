@@ -19,19 +19,34 @@ One GPU, one engine. Everything below assumes that invariant.
 
 Ports: **1919** engine (OpenAI *and* Anthropic APIs) · **8080** panel.
 
-**`~/models` is not on the fast disk.** `/home` is a SATA MX500 and `/` is the
-Gen4 NVMe, so every cold model load reads at the SATA ceiling. Measured with
-`O_DIRECT`, 2026-08-31:
+**`~/models` is a symlink to `/srv/models` on the NVMe** (moved 2026-08-31).
+`/home` is a Crucial MX500 on SATA and `/` is a Lexar NQ790 on Gen4 NVMe;
+`MODELS_DIR` is an env var (`LLLM3090_MODELS_DIR`) but the symlink means the
+package needs to know nothing. The originals are still at `~/models.sata` until
+they are deleted. Read speeds, `O_DIRECT`:
 
-| | `/` (Lexar NQ790, NVMe Gen4) | `/home` (Crucial MX500, SATA) |
+| | `/` (NVMe Gen4) | `/home` (SATA) |
 |---|---|---|
 | sequential | 4.4 GB/s | 0.53 GB/s |
 | random 1 MiB | 5.15 GB/s | 0.37 GB/s |
 
-A 17.7 GB checkpoint is therefore ~33 s to load rather than ~4. Moving the
-directory needs a destination on `/`, which is root-owned; `MODELS_DIR` is an
-env var (`LLLM3090_MODELS_DIR`) and a symlink at `~/models` works, so the
-package needs to know nothing about it.
+**A cold load does not improve by the ratio of those numbers**, and predicting
+that it would was wrong by 6x. Measured on the same 18.2 GB checkpoint, page
+cache dropped per run with `posix_fadvise(DONTNEED)` -- which needs no root, and
+without which the second run reads a warm cache and looks impossible:
+
+| | seconds to ready |
+|---|---|
+| SATA, cold | 62 |
+| NVMe, cold | 15-26 (three runs) |
+| NVMe, warm cache | 9.8 |
+
+The warm figure is the floor: dequantisation, the VRAM upload and graph build
+cost ~10 s whatever the disk does. Subtracting it, the effective read rate
+during a load is ~0.35 GB/s on SATA and ~1.8 GB/s on NVMe -- the SATA figure
+matches its random-read measurement, and the NVMe one is well under its
+sequential. **A load is not a sequential stream, so never size one from a
+sequential benchmark.** The real gain from the move is about 3x, not 8x.
 
 ## Install and upgrade
 
@@ -77,15 +92,33 @@ side: Qwen3.8-27B **34.9 -> 56.6** tok/s (1.62x), Qwen3.6-35B-A3B-MTP **130.5
 -> 171.8** (1.32x, 179.9 on code editing). It is decided from the file, never
 from the catalogue: llama.cpp *refuses to start* with that flag against a
 checkpoint lacking the head, and a metadata key is not proof -- a conversion can
-announce `nextn_predict_layers` and ship no tensors.
+announce `nextn_predict_layers` and ship no tensors. It gets *better* on
+copy-heavy work, not worse: reproducing a 369-line file with one identifier
+renamed, Qwen3.8-27B ran **32.2 -> 59.5** tok/s (**1.85x**) at **100%** draft
+acceptance, because the next token is trivially predictable when the output is
+copying a known input.
 
 **ngram is a regression, and stacking it with MTP is worse than MTP alone.**
 Measured on Qwen3.8-27B: `ngram-cache` alone 0.88x, `draft-mtp,ngram-cache`
 1.42x, `draft-mtp` alone 1.62x. So the stack does beat ngram by itself -- it
 just costs you a fifth of what MTP was already giving. Hit rates on novel generation are low, so you pay
 for rejected drafts and the weak drafts displace good ones. The advice online
-that advanced users should combine them is wrong on this box. It may flip for
-output that copies a long input verbatim; it does not help general agentic work.
+that advanced users should combine them is wrong on this box.
+
+**It does not flip on long copy-heavy prompts either -- that was tested.** The
+obvious objection to the numbers above is that they were taken on a seven-line
+edit, which is not the regime prompt-lookup drafting is built for. Re-measured
+on Qwen3.8-27B against a 369-line file copied back with one identifier renamed,
+7 samples per cell: `ngram-cache` **0.92x**, `draft-mtp,ngram-cache` 1.60x,
+`draft-mtp` alone **1.85x**. The mechanism behaved exactly as the objection
+predicted and the throughput still did not follow -- acceptance climbed from
+**0%** on the seven-line edit to **62%** on the long copy, and 62% is still
+below what it costs to draft. Adding ngram to MTP *lowered* acceptance from 100%
+to 85%, which is the weak-drafts-displace-good-ones effect made visible. Two
+caveats worth keeping: ngram's spread was wide ([29.0 .. 34.5] against a tight
+baseline [31.8 .. 32.8]), so individual runs did clear baseline while the median
+did not; and this says nothing about a checkpoint with no MTP head, where the
+comparison is ngram against nothing rather than ngram against a better drafter.
 
 **A drafter costs VRAM, which is the resource the catalogue defends.** DFlash
 and EAGLE-3 need a separate resident model, so they buy speed with context.
