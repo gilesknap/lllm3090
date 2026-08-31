@@ -3,32 +3,26 @@
 from __future__ import annotations
 
 import getpass
-import hashlib
 import os
 import pathlib
 import shlex
 import shutil
 import subprocess
 import sys
-import tarfile
-import tempfile
-import urllib.request
 from importlib import resources
 from pathlib import Path
 
 import typer
 
-from . import catalog, config, engine, hardware, preflight, storage
+from . import catalog, config, engine, engines, hardware, preflight, storage
 from ._version import __version__
 
-# The engine build is pinned, not tracked. "Latest" would silently change the
-# thing every figure in the model catalogue was measured against.
-LLAMA_BUILD = "b10628"
-LLAMA_ASSET = f"llama-{LLAMA_BUILD}-bin-ubuntu-vulkan-x64.tar.gz"
-LLAMA_URL = (
-    f"https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_BUILD}/{LLAMA_ASSET}"
-)
-LLAMA_SHA256 = "c64b6d5820ea6dc3227495e2c30c397fb73c24158291cfb7ef99892a708605a6"
+# The pin, the digest recorded for it and the fetch itself live in
+# `lllm3090.engines`, because a benchmark build has to be fetched the same way
+# without going through the CLI. Re-exported: `cli.LLAMA_BUILD` was the name
+# before there was more than one build.
+LLAMA_BUILD = engines.LLAMA_BUILD
+LLAMA_SHA256 = engines.LLAMA_SHA256
 
 app = typer.Typer(add_completion=False, help=__doc__)
 
@@ -78,32 +72,46 @@ def install_engine(
         typer.echo(f"Engine already installed at {target} (use --force to replace)")
         return
 
-    typer.echo(f"Downloading {LLAMA_ASSET} ...")
-    with tempfile.TemporaryDirectory() as tmp:
-        archive = Path(tmp) / LLAMA_ASSET
-        urllib.request.urlretrieve(LLAMA_URL, archive)
-        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-        if digest != LLAMA_SHA256:
-            typer.echo(
-                f"Checksum mismatch!\n"
-                f"  expected {LLAMA_SHA256}\n  got      {digest}"
-            )
-            raise typer.Exit(1)
-        typer.echo("Checksum verified.")
-        extract_to = Path(tmp) / "x"
-        with tarfile.open(archive) as tar:
-            tar.extractall(extract_to, filter="data")
-        # The archive contains a single build directory; flatten it.
-        inner = next(p for p in extract_to.rglob("llama-server")).parent
-        if target.exists():
-            shutil.rmtree(target)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(inner, target)
-    for binary in ("llama-server", "llama-cli", "llama-bench"):
-        path = target / binary
-        if path.exists():
-            path.chmod(0o755)
+    typer.echo(f"Downloading {engines.asset(LLAMA_BUILD)} ...")
+    try:
+        digest = engines.fetch(LLAMA_BUILD, target, expect=LLAMA_SHA256)
+    except engines.BuildError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(1) from exc
+    typer.echo(f"Checksum verified: {digest}")
     typer.echo(f"Engine installed at {target}")
+
+
+@app.command("fetch-engine")
+def fetch_engine(
+    build: str = typer.Option(
+        LLAMA_BUILD, help="Upstream llama.cpp tag, e.g. b10715."),
+    force: bool = typer.Option(False, help="Re-fetch if already present."),
+) -> None:
+    """Fetch a build to measure against, without touching the installed engine.
+
+    Deciding whether to move the pin means running a candidate and the incumbent
+    on the same machine, so a benchmark build is kept beside the install rather
+    than replacing it. The digest printed here is what gets committed if the
+    candidate wins and becomes the pin.
+    """
+    target = engines.bench_dir(build)
+    if (target / "llama-server").exists() and not force:
+        typer.echo(f"{build} already at {target} (use --force to re-fetch)")
+        return
+
+    typer.echo(f"Downloading {engines.asset(build)} ...")
+    expect = LLAMA_SHA256 if build == LLAMA_BUILD else None
+    try:
+        digest = engines.fetch(build, target, expect=expect)
+    except engines.BuildError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(1) from exc
+    typer.echo(f"Checksum verified: {digest}")
+    if expect is None:
+        typer.echo("Verified against the digest GitHub publishes for this tag.")
+        typer.echo("Commit it as LLAMA_SHA256 if this build becomes the pin.")
+    typer.echo(f"{build} fetched to {target}")
 
 
 @app.command()
