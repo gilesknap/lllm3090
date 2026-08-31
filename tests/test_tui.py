@@ -161,6 +161,26 @@ def test_a_speed_is_never_shown_without_where_it_was_measured(snap):
     assert "(other card)" in wide, "a window with room must show the qualifier"
 
 
+def test_the_reason_a_speed_does_not_apply_is_the_one_the_catalogue_gave():
+    """There are two independent reasons now -- the card and the backend --
+    and "other card" is a lie about the second one."""
+    row = {"expected_tok_s": 55, "verified": True, "speed_applies": False,
+           "speed_note": "measured on vulkan"}
+    assert "(measured on vulkan)" in tui.speed_label(row, brief=False)
+    assert "(measured on vulkan)" in tui.speed_label(row, brief=True)
+
+
+def test_a_panel_too_old_to_send_a_reason_still_withholds_the_claim():
+    """The terminal UI drives a panel over HTTP, and after an upgrade that can
+    be an older one that sends no `speed_note`. Falling back to "measured"
+    there would assert the figure describes this machine at exactly the moment
+    it does not, so the fallback follows `speed_applies`."""
+    stale = {"expected_tok_s": 55, "verified": True, "speed_applies": False}
+    assert "(other card)" in tui.speed_label(stale, brief=False)
+    fresh = {"expected_tok_s": 55, "verified": True, "speed_applies": True}
+    assert "(measured)" in tui.speed_label(fresh, brief=False)
+
+
 def test_the_row_under_the_cursor_is_always_drawn(snap):
     """A cursor you cannot see is a UI that acts on something invisible.
 

@@ -10,6 +10,24 @@ change is only visible in the source it does not need a line here.
 
 ## [Unreleased]
 
+### Changed
+
+- **Every surface that shows a speed now says what it is a speed of.** A speed
+  is a property of a configuration, and since a machine can now carry two
+  backends the card is no longer the whole of that: the same dense 27B serves
+  54.8 tok/s under Vulkan and 84.9 under CUDA — a wider spread than lies
+  between some catalogue entries. `lllm3090 models` captions the column, the
+  panel and the terminal UI say which backend a figure came from, and a figure
+  measured on another card or another backend is shown unchanged rather than
+  scaled, because a ratio is a guess printed in the same typeface as a
+  measurement.
+- **Qwen3.8-27B is quoted at 55 tok/s rather than 35.** The engine turns on its
+  multi-token prediction head by itself and has done since the head was
+  detected automatically, so 35 was the speed of a configuration that has not
+  shipped for some time. A catalogue figure below what the shipped
+  configuration delivers is not conservative — it is wrong about which
+  configuration it describes.
+
 ### Added
 
 - **`lllm3090 build-cuda`, and a `setup` that offers it.** llama.cpp publishes

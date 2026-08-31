@@ -45,6 +45,20 @@ ENGINE_PID = STATE_DIR / "engine.pid"
 #: The profile whose card the catalogue's speeds were measured on.
 REFERENCE_PROFILE = "rtx-3090"
 
+#: The backend they were measured on, which is also the one that installs.
+#:
+#: A speed is a speed *of* a configuration, and since there can now be two
+#: backends on one machine, the card is no longer the whole of "of". The same
+#: dense 27B serves 54.8 tok/s under Vulkan and 84.9 under CUDA -- a bigger
+#: spread than most of the catalogue's entries have between them. So a figure
+#: shown without saying which backend produced it is not a small imprecision,
+#: it is a number that is wrong by more than the thing it is being compared to.
+#:
+#: Capacity does not work this way and is not treated this way: what fits is
+#: arithmetic and travels to any card, so it is recomputed rather than
+#: qualified. Speed is a measurement and does not travel at all.
+REFERENCE_BACKEND = "vulkan"
+
 #: Minimum driver that carries a working Vulkan ICD for this stack.
 MIN_DRIVER_VERSION = 550
 

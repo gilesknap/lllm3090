@@ -591,3 +591,73 @@ def test_more_slots_than_pages_is_refused_rather_than_overcommitted():
 
     with pytest.raises(ValueError, match="do not fit"):
         catalog.plan(heavy, seatable + 1, desktop=True, profile=card)
+
+
+# ---------------------------------------------------------------------------
+# What a speed is a speed of
+# ---------------------------------------------------------------------------
+
+
+def _card(measured: bool) -> hardware.Profile:
+    return hardware.Profile(
+        id="t", name="t", compute_capability="8.6", vram_mib=24576,
+        bandwidth_gbs=0, measured=measured,
+    )
+
+
+def test_the_right_card_on_the_right_backend_is_just_measured():
+    applies, note = catalog.speed_qualifier(_card(True), "vulkan")
+    assert applies and note == "measured"
+
+
+def test_the_right_card_on_another_backend_does_not_describe_this_machine():
+    """The same dense 27B serves 54.8 tok/s under Vulkan and 84.9 under CUDA.
+    A figure labelled only "measured" on a CUDA engine understates by a third
+    while reading as a fact about the machine in front of you."""
+    applies, note = catalog.speed_qualifier(_card(True), "cuda")
+    assert not applies
+    assert note == "measured on vulkan"
+
+
+def test_another_card_says_so_as_it_always_did():
+    applies, note = catalog.speed_qualifier(_card(False), "vulkan")
+    assert not applies and note == "other card"
+
+
+def test_both_wrong_says_both():
+    """Collapsing the two into one boolean is what made "other card" a lie on
+    a CUDA engine with the right card in it."""
+    applies, note = catalog.speed_qualifier(_card(False), "cuda")
+    assert not applies
+    assert "other card" in note and "vulkan" in note
+
+
+def test_an_engine_that_could_not_be_asked_is_no_objection():
+    """`lllm3090 models` runs before `install-engine` on a fresh machine, and
+    the planner asks the engine which backend it is. Qualifying every row on
+    the strength of a backend that is about to be Vulkan is pure noise -- the
+    same rule capability_ok already follows for an unknown capability."""
+    applies, note = catalog.speed_qualifier(_card(True), "cpu")
+    assert applies and note == "measured"
+
+
+def test_every_row_carries_the_backend_and_what_to_say_about_it(monkeypatch):
+    """Three front ends render this column and they must not each invent the
+    wording, which is how a promise gets made in one place and withdrawn in
+    another."""
+    monkeypatch.setattr(catalog.engines, "backend", lambda directory=None: "cuda")
+    rows = catalog.catalog_for_panel(desktop=True)
+    assert rows, "the catalogue is not empty"
+    for row in rows:
+        assert row["backend"] == "cuda"
+        assert row["speed_note"]
+        assert not row["speed_applies"], "these speeds were taken on vulkan"
+
+
+def test_the_dense_27b_is_no_longer_quoted_at_its_pre_mtp_speed():
+    """It carries a multi-token prediction head, the engine turns that on by
+    itself, and 35 tok/s was what it did before that. A catalogue figure below
+    what the shipped configuration delivers is not conservative, it is wrong
+    about which configuration it is describing."""
+    dense = next(m for m in catalog.load_catalog() if m.name == "Qwen3.8-27B")
+    assert dense.expected_tok_s == 55

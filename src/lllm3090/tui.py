@@ -237,22 +237,26 @@ def speed_label(row: dict[str, Any], brief: bool = False) -> str:
     An entry nobody has benchmarked has no number, and no number is the honest
     thing to print: the browser panel once rendered such an entry as
     ``~null tok/s``, which reads as a broken panel rather than as an absence.
-    A number measured on another card is shown as measured elsewhere, never
-    scaled to this one.
+    A number measured on another card, or on another backend, is shown as
+    measured elsewhere, never scaled to this one.
 
     ``brief`` is for a window with no room for the whole qualifier. It drops
-    only ``(measured)``, which says the ordinary thing; a figure taken on some
-    other card never loses the words that say so, because without them it reads
-    as a measurement of this machine.
+    only ``(measured)``, which says the ordinary thing; a figure that does not
+    describe this machine never loses the words that say so, because without
+    them it reads as a measurement of it. What those words are is decided in
+    :func:`lllm3090.catalog.speed_qualifier` -- the card and the backend are
+    two independent reasons and they do not say the same thing.
     """
     if row.get("expected_tok_s") is None:
         return "speed not measured"
     label = f"~{row['expected_tok_s']} tok/s"
-    if row.get("verified"):
-        if not row.get("speed_applies"):
-            label += " (other card)"
-        elif not brief:
-            label += " (measured)"
+    if row.get("verified") and not (row.get("speed_applies") and brief):
+        # The fallback follows `speed_applies`, and that matters: this can be
+        # rendering a row fetched over HTTP from an older panel that sends no
+        # `speed_note`, and defaulting to "measured" there would assert the
+        # figure describes this machine at exactly the moment it does not.
+        default = "measured" if row.get("speed_applies") else "other card"
+        label += f" ({row.get('speed_note') or default})"
     return label
 
 

@@ -261,10 +261,26 @@ def models() -> None:
             typer.echo(
                 "No desktop session: the full card is available for context."
             )
-    typer.echo("")
-    header = f"{'MODEL':<24}{'SIZE':>8}{'KIND':>10}{'CONTEXT':>12}  {'STATE':<16}SPEED"
-    typer.echo(header)
+    # A speed is a speed *of* something, and since a machine can carry two
+    # backends the card is no longer the whole of that. The same dense 27B
+    # serves 54.8 tok/s under Vulkan and 84.9 under CUDA, which is a wider
+    # spread than lies between some of the entries below -- so the column is
+    # captioned rather than left to be read as a fact about this machine.
     rows = catalog.catalog_for_panel()
+    backend = rows[0]["backend"] if rows else engines.CPU
+    if backend not in (config.REFERENCE_BACKEND, engines.CPU):
+        typer.echo(
+            f"The engine installed here is {backend}, and every speed below "
+            f"was measured on {config.REFERENCE_BACKEND}.\nThey are shown "
+            "unchanged rather than scaled: a ratio would be a guess printed in "
+            "the same\ntypeface as a measurement. Expect them to understate."
+        )
+    typer.echo("")
+    header = (
+        f"{'MODEL':<24}{'SIZE':>8}{'KIND':>10}{'CONTEXT':>12}  {'STATE':<16}"
+        f"SPEED ({config.REFERENCE_BACKEND}, decoding)"
+    )
+    typer.echo(header)
     cautions: list[str] = []
     for row in rows:
         # Two independent facts: whether it is on the disk, and what the card
@@ -284,7 +300,7 @@ def models() -> None:
             cautions.append(f"  {row['name']}: {row['status_note']}")
         speed = f"~{row['expected_tok_s']} tok/s" if row["expected_tok_s"] else "-"
         if row["verified"]:
-            speed += " (measured)" if row["speed_applies"] else " (other card)"
+            speed += f" ({row['speed_note']})"
         ctx = (
             f"{row['max_ctx'] // 1024}k x{row['parallel']}" if row["fits"] else "-"
         )

@@ -17,7 +17,7 @@ from typing import Any
 
 import yaml
 
-from . import config, hardware
+from . import config, engines, hardware
 
 #: Bytes per KiB/MiB, spelled out so the arithmetic below reads unambiguously.
 MIB = 1024 * 1024
@@ -550,6 +550,41 @@ def status(
     return STATUS_OK, ""
 
 
+def speed_qualifier(
+    profile: hardware.Profile, backend: str
+) -> tuple[bool, str]:
+    """Whether the catalogue's speeds describe this machine, and what to say.
+
+    Returns ``(applies, note)``, where ``note`` is the word every front end
+    puts after the figure. There are two independent ways a measured speed can
+    fail to describe what you would get, and collapsing them into one boolean
+    was fine while there was only one of them:
+
+    * **The card.** Speeds are never scaled to a different one -- a bandwidth
+      ratio produces a guess, and the UI would show it in the same typeface as
+      a measurement.
+    * **The backend.** New. The same dense 27B serves 54.8 tok/s under Vulkan
+      and 84.9 under CUDA, so a figure labelled only "measured" on a CUDA
+      engine understates by a third while looking like a fact about this
+      machine.
+
+    An engine that could not be asked which backend it is -- nothing installed
+    yet, a probe that timed out -- is *no objection*, the same way an unknown
+    compute capability is in :func:`capability_ok`. ``lllm3090 models`` runs
+    before ``install-engine`` on a fresh machine, and qualifying every row on
+    that basis would be pure noise about a backend that is about to be Vulkan.
+    """
+    right_card = profile.measured
+    right_backend = backend in (config.REFERENCE_BACKEND, engines.CPU)
+    if right_card and right_backend:
+        return True, "measured"
+    if right_card:
+        return False, f"measured on {config.REFERENCE_BACKEND}"
+    if right_backend:
+        return False, "other card"
+    return False, f"other card, measured on {config.REFERENCE_BACKEND}"
+
+
 def catalog_for_panel(desktop: bool | None = None) -> list[dict[str, Any]]:
     """Catalogue entries decorated with fit, plan and installed-state, for the UI.
 
@@ -560,6 +595,8 @@ def catalog_for_panel(desktop: bool | None = None) -> list[dict[str, Any]]:
     """
     have = {m["name"] for m in installed()}
     profile = hardware.detect()
+    backend = engines.backend()
+    speed_applies, speed_note = speed_qualifier(profile, backend)
     if desktop is None:
         desktop = hardware.graphical()
     rows = []
@@ -588,8 +625,12 @@ def catalog_for_panel(desktop: bool | None = None) -> list[dict[str, Any]]:
                 "kind": m.kind,
                 "params": m.params,
                 "verified": m.verified,
-                "speed_applies": profile.measured,
+                "speed_applies": speed_applies,
+                # What to say when it does not apply -- and there are now two
+                # reasons it might not, which one boolean cannot distinguish.
+                "speed_note": speed_note,
                 "measured_on": hardware.reference().name,
+                "backend": backend,
                 "notes": m.notes,
                 "tags": m.tags,
                 "expected_tok_s": m.expected_tok_s,
