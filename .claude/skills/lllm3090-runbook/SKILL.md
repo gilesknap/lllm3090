@@ -127,16 +127,28 @@ depth. Resident KiB/token as a multiple of each model's nominal q8 figure:
 | Qwen3.6-35B-A3B-MTP (10) | **1.216x** | 1.462x | 1.363x | **1.660x** |
 
 **`config.KV_OVERHEAD_FACTOR` is 1.12 and no single number can be right.** It
-was calibrated on Gemma-4-26B-A4B (Vulkan, no MTP head) and sits *between* the
-two models' base factors, wrong for both in opposite directions. Three lessons:
+was calibrated on Gemma-4-26B-A4B (Vulkan, no MTP head). Four lessons:
 
-- **The base factor is model-dependent**, 1.094 vs 1.216 with no speculation on
-  the shipped backend.
-- **MTP's draft context is a second KV cache, and its cost does not
-  extrapolate** -- +4.80 KiB/token on the 27B, +2.46 on the A3B; 15.0% vs 24.6%
-  of nominal. Neither absolute nor proportional. Measure it per model.
-- **Only the backend multiplier generalises**: 1.100-1.136x across both models
-  and both settings. Treat that as a constant and nothing else here.
+- **Resident VRAM is not linear in context on a hybrid MoE**, so "KiB per token"
+  is not a well-defined quantity for one. Vulkan, no speculation, by segment:
+  the dense 27B reads 34.92 / 35.08 (linear to 0.5%), the A3B-MTP reads
+  **8.99 / 11.57 / 16.78** -- its marginal cost nearly doubles. A two-point
+  slope on that model is an average over a curve. **Always take a third point
+  before quoting a slope.**
+- **Most of it is derivable from the GGUF header.** `kv_heads x (key_length +
+  value_length) x 2 x full-attention layers` reproduces models.yaml's nominals
+  exactly, where full-attention layers is `(block_count - 1) /
+  full_attention_interval`. The `-1` is the MTP head, which is why block_count
+  is 65 for a 64-layer model.
+- **MTP's cost is that one extra layer, cached at f16** -- 4.00 and 2.00
+  KiB/token predicted against 4.80 and 2.46 measured. Which is why quantising
+  the draft cache halves it.
+- **Only the backend multiplier generalises**: 1.100-1.136x plus a fixed
+  ~230 MiB. It is a ratio of identical measurements, so curvature divides out.
+
+`fit` also has two bugs unrelated to CUDA: `kv_kib_per_token / 2` assumes q8_0
+is half of f16 (it is 34/32 bytes per value, so 0.53125x -- a 6% under-count on
+every model), and its whole shape assumes linearity.
 
 **MTP's draft cache is not quantised, and quantising it is free.**
 `--spec-draft-type-k` / `--spec-draft-type-v` set the *draft* cache's type and

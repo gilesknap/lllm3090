@@ -655,27 +655,92 @@ backends, MTP on and off:
 | Qwen3.8-27B | 32 | 35.00 (**1.094×**) | 39.80 (1.244×) | 39.00 (1.219×) | 43.77 (1.368×) |
 | Qwen3.6-35B-A3B-MTP | 10 | 12.15 (**1.216×**) | 14.62 (1.462×) | 13.63 (1.363×) | 16.60 (**1.660×**) |
 
-**One constant cannot express that**, and the reason is worth stating precisely
-because the obvious repair does not work either.
+**One constant cannot express that.** But the reason is not the one those
+figures suggest, and the difference matters for what a fix has to do.
 
-- **The base factor is model-dependent.** With no speculation at all and on the
-  shipped backend, the two models want **1.094 and 1.216**. The global `1.12`
-  lies between them, and is wrong for both in opposite directions.
-- **MTP's draft cache is a second KV cache**, and its cost is **neither absolute
-  nor a fixed share**. It adds 4.80 KiB/token to the dense 27B and 2.46 to the
-  A3B — so not absolute; that is 15.0% against 24.6% of nominal — so not
-  proportional either.
+- **On one of these models, "KiB per token" is not a well-defined quantity at
+  all.** Every number in that table is a slope taken between two context sizes,
+  and that is only meaningful if resident VRAM is linear in context. Measured
+  with mid-points added, on Vulkan with no speculation:
+
+  | segment | Qwen3.8-27B | Qwen3.6-35B-A3B-MTP |
+  |---|---|---|
+  | low | 34.92 | **8.99** |
+  | mid | 35.08 | 11.57 |
+  | high | — | **16.78** |
+  | end to end | 35.00 | **12.15** |
+
+  The dense model is linear to within 0.5%. The hybrid MoE's marginal cost
+  **nearly doubles across its range**, so its end-to-end 12.15 is an average
+  over a curve and depends entirely on which two points produced it. That is not
+  noise: flattening the top segment to the bottom's slope needs ~560 MiB of
+  error against a desktop that moves ~100 MiB.
+
+- **So the base factor is not shown to be model-dependent.** The 27B's 1.029
+  against nominal is solid. The A3B's apparent 1.14 is an artefact of the lever
+  arm, and its true cost is a curve rather than a factor.
+- **MTP's term inherits the same doubt.** 4.80 KiB/token on the 27B is a slope
+  on a straight line and can be trusted; 2.46 on the A3B is a slope on a curve
+  and cannot.
 - **Only the backend multiplier generalises.** CUDA costs **1.100–1.136×** per
   token of KV across both models and both speculation settings, alongside a
-  fixed ~230 MiB. That one is safe to treat as a constant.
+  fixed ~230 MiB. It is a ratio of two measurements taken the same way, so the
+  curvature divides out.
 
 So `fit` under-counts KV on both backends today, and the driver and workspace
-reserves absorb it — on Vulkan. That is a planner blind to *two* variables it
-should know about rather than a CUDA bug. The practical consequence is that
-resident KV has to be calibrated per model, the way every `verified: true` speed
-in the catalogue is: a single nominal-times-a-constant is the wrong shape, and
-the right-hand columns above must never be lifted as backend constants, because
-they carry a model and an MTP head inside them.
+reserves absorb it — on Vulkan. That is a planner blind to variables it should
+know about rather than a CUDA bug.
+
+#### Most of it is derivable, and two of the terms are arithmetic
+
+The checkpoints say more than `models.yaml` does. Both of these models are
+**hybrids** — `full_attention_interval = 4`, so one layer in four keeps a KV
+cache and the rest are SSM, whose state is per-sequence rather than per-token —
+and `block_count` **includes the MTP head**, which is why it reads 65 for a
+64-layer model and 41 for a 40-layer one.
+
+| from the GGUF header | full-attn layers | nominal f16 | `models.yaml` |
+|---|---|---|---|
+| Qwen3.8-27B | 16 | 64.0 | 64 ✓ |
+| Qwen3.6-35B-A3B-MTP | 10 | 20.0 | 20 ✓ |
+
+`kv_heads × (key_length + value_length) × 2 bytes × full-attention layers`
+reproduces the catalogue's figures exactly. **The nominals are right.** And the
+MTP term stops being a mystery:
+
+**The MTP head is one more full-attention layer, cached at f16.** Predicted
+4.00 KiB/token for the 27B and 2.00 for the A3B against 4.80 and 2.46 measured —
+a consistent ×1.20 and ×1.23. That is also why quantising the draft cache
+[halves it](#the-draft-cache-is-not-quantised-and-quantising-it-is-free): f16 to
+eight bits.
+
+Which leaves two plain bugs in `fit`, neither of them about CUDA:
+
+- **`kv_kib_per_token / 2` assumes `q8_0` is half of `f16`.** It is 34 bytes per
+  32 values, so 0.53125× — a 6% under-count on every model in the catalogue.
+- **One constant covers three things**: allocator overhead, the backend, and
+  MTP's extra layer.
+
+Correcting the first alone makes `fit` 6% more conservative, which pays for part
+of the CUDA gap by itself. What remains after deriving the rest is a residual of
+**1.03 on the dense 27B** — small, and the only term the derivation does not
+already account for.
+
+The hybrid MoE has no such residual to quote, because it has no single slope.
+Which is the deeper problem: **`fit`'s whole shape assumes resident VRAM is
+linear in context**, since it divides a spare-MiB budget by a per-token cost.
+That holds for the dense model and visibly fails for the hybrid one. A fix that
+only makes the constant backend-aware would still be solving the wrong equation
+for half the catalogue.
+
+:::{note}
+This paragraph has now been rewritten twice by measurement. It first claimed a
+tidy three-term model from one model; the second model broke it. It then claimed
+the overhead factor was model-dependent; adding mid-points showed that figure was
+an average over a curve. Both are left visible above, because the pattern is the
+point — a slope between two measurements looks like a constant until you measure
+a third.
+:::
 
 :::{note}
 An earlier revision of this page derived a tidy three-term model — base,
