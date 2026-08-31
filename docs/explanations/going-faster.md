@@ -34,7 +34,7 @@ number. Where the two differ, the verdict says which backend it applies to.
 | [Flash attention](#already-in-the-engine) | both | not separately measured | not separately measured | **on by default** |
 | [CUDA instead of Vulkan](#cuda-instead-of-vulkan-13-bare-16-as-shipped) | both | — | 1.31× prefill, 1.28× decode bare, **~1.6×** as shipped | not adopted — costs a toolkit and a per-card binary |
 | [DFlash2 drafter](#measured-and-not-adopted-dflash2) | decode | 0.90–1.04× *against MTP* | 0.92–1.01× *against MTP* | rejected on **both** — a wash, for 36k tokens of context |
-| [Draft width 7](#draft-width-matters-more-than-which-drafter) | decode | 0.78–0.98× *against width 3* | 0.87–1.22× *against width 3* | rejected on Vulkan; on CUDA, copy-heavy work only |
+| [Draft width 7](#draft-width-matters-more-than-which-drafter) | decode | 0.78–0.98× *against width 3* | 0.83–1.22× *against width 3* | rejected on Vulkan; on CUDA, copy-heavy work only |
 | [Prompt lookup (ngram)](#measured-and-set-aside-prompt-lookup-drafting) | decode | 0.65–0.88× | 0.92–1.41× | rejected on Vulkan; **wins copying on CUDA** |
 | [ngram stacked on MTP](#measured-and-set-aside-prompt-lookup-drafting) | decode | 0.84–0.90× *against MTP* | 0.86–1.10× *against MTP* | rejected on Vulkan; **the fastest copying config on CUDA** |
 | [q4_0 KV cache](#already-in-the-engine) | capacity | 4× the conversation, ~0.63× decode | not measured | not taken — never measured here |
@@ -264,18 +264,40 @@ This is the cleanest test of the claim that the width penalty belongs to the
 backend, because acceptance and speed can be read separately. Widening 3 → 7,
 each width against its own run's baseline:
 
+Each cell is given twice, because the two defensible ways to compute it disagree
+and the honest answer is the span between them. The first is against the
+baseline measured in the same run; the second is the raw tok/s of one run over
+the other.
+
 | width 3 → 7, on CUDA | prose | code-edit | long-copy |
 |---|---|---|---|
-| `draft-mtp` | **0.92×** | 0.87× | **1.22×** |
-| `dflash` | 1.01× | 1.06× | 0.90× |
-| `draft-mtp,ngram-cache` | 1.00× | 1.04× | **1.19×** |
+| `draft-mtp` | **0.92–0.93×** | 0.83–0.87× | **1.13–1.22×** |
+| `dflash` | 1.01× | 1.02–1.06× | 0.83–0.90× |
+| `draft-mtp,ngram-cache` | 1.00–1.01× | 0.99–1.04× | **1.11–1.19×** |
 
-The width-7 run carries its own `baseline` config so each ratio is against the
-baseline measured alongside it, which the Vulkan tables above cannot offer — the
-Vulkan width-7 sweep recorded no baseline, so its 0.78–0.98× is a ratio of raw
-tok/s across two runs. That distinction is not pedantry here: the two CUDA runs'
-baselines differ by 6.8% on `long-copy`, which is a third of the effect being
-measured on that row.
+**Why there is a span at all**, and it is a limitation of this measurement rather
+than a subtlety about it. The width-7 sweep carries its own `baseline` config, on
+the theory that a ratio against a baseline from the same run cancels drift. It
+only cancels drift *between* runs. Reading the per-request rates out of the
+server logs in chronological order shows the rest:
+
+```
+width-3 run, baseline:  42.5 42.6 42.7 43.2 43.5 43.8 43.8 43.9 …  then 42.4 flat to ±0.05
+width-7 run, baseline:  43.2 43.4 43.4 43.3 43.4 43.4 43.1 42.3 …  then 41.6, then 39.5
+```
+
+Same binary, same flags — `--spec-draft-n-max` never reaches the `baseline`
+config — same prompts. The first run *ramps up*, a card coming off idle. The
+second **declines by 9% over ten minutes** of sustained load, having been started
+a minute after the first finished. So its `long-copy` baseline of 39.5 is the
+trough of its own decline, and dividing by it flatters every `long-copy` ratio in
+that run.
+
+Nothing here changes sign under either reading, and prose is unaffected because
+the two baselines agree to 0.5% — but the magnitudes on the copy row are known to
+about ±5% and no better. Settling them needs config order randomised, or a
+baseline re-measured at the *end* of each run as well as the start. That is a
+change to the instrument and has not been made.
 
 **Acceptance falls by the same amount on both backends and the speed does not.**
 MTP on prose goes 85% → 64% acceptance on CUDA, against 85% → 63% on Vulkan —
@@ -285,16 +307,17 @@ a property of the drafter and the price of a wide verify is a property of the
 backend, and here they are separated cleanly.
 
 **Where acceptance barely falls, width 7 becomes a win.** On `long-copy` MTP
-holds 96% at width 7, and CUDA turns that into **1.22×** — 2.70× over baseline,
-against 2.22× at width 3. Stacked with ngram it reaches **2.91×**, 115.1 tok/s,
-the fastest configuration measured anywhere on this page. Vulkan, at 97%
-acceptance on the same workload, still lost.
+holds 96% at width 7, and CUDA turns that into a gain of **13–22%** — 106.5 tok/s
+against 94.0. Stacked with ngram it reaches **115.1 tok/s**, the fastest
+configuration measured anywhere on this page. Vulkan, at 97% acceptance on the
+same workload, still lost.
 
 So the advice splits by backend rather than being a rule:
 
 - **On Vulkan, take the default 3.** Unchanged, and the engine already does.
-- **On CUDA, 3 is still right for prose and code editing** — MTP loses 8% and
-  13% at width 7 — **and 7 is right for copy-heavy work**, worth 19–22%.
+- **On CUDA, 3 is still right for prose and code editing** — MTP loses 7–8% and
+  13–17% at width 7 — **and 7 is right for copy-heavy work**, worth 11–22%
+  depending on which baseline the ratio is taken against.
 
 Which is a per-workload knob and not a default, so nothing about it would be
 switched on automatically even if CUDA shipped. `--spec-draft-n-max` is the flag,
@@ -409,7 +432,7 @@ protocol. **It was mostly right, and specifically wrong once.**
 |---|---|
 | ngram's rejection is not settled for CUDA | **right** — 0.88× → 1.41× on copying, a flipped verdict |
 | stacking's rejection is not settled | **right** — it is now the fastest copying config, 2.44× against MTP's 2.22× |
-| the width penalty belongs to the backend | **right** — same acceptance collapse, a third of the speed cost; and width 7 wins copy-heavy work |
+| the width penalty belongs to the backend | **right** — same acceptance collapse, a third of the speed cost; and width 7 wins copy-heavy work, by 11–22% |
 | DFlash2's rejection is not settled | **wrong** — 0.92–1.01× against MTP on CUDA, against 0.90–1.04× on Vulkan. Unchanged. |
 | (unstated) MTP's own multiplier would carry over | **wrong** — 1.61–1.82× on Vulkan, 1.96–2.22× on CUDA |
 
@@ -533,13 +556,24 @@ SWEEP_DRAFT=~/models/.drafters/Qwen3.8-27B-DFlash2-Q4_K_M.gguf \
 comma-separated config list exists so a second width does not have to re-run
 everything, and it is tempting to drop the baseline as a known quantity. It is
 not one: across the two CUDA runs here, taken 35 minutes apart on an otherwise
-idle card, the baseline moved 0.5% on prose and **6.8% on `long-copy`**. A ratio
-against the other run's baseline would have carried that drift into the answer,
-on the row where the effect being measured was 19%.
+idle card, the baseline moved 0.5% on prose and **6.8% on `long-copy`**.
 
 ```
 dev/spec-sweep.py MODEL.gguf "" baseline,draft-mtp,mtp+ngram,dflash
 ```
+
+**And do not mistake that for a fix.** A baseline in the same run cancels drift
+*between* runs; it does nothing about drift *through* one, because the baseline
+config runs first and the card it measures is not the card the later configs get.
+The per-request rates in `sw-baseline.log` show a run starting cold and gaining
+3% as clocks ramp, and a run started on a hot card losing 9% over ten minutes.
+Both were the identical invocation. Which is why [the width
+numbers](#draft-width-matters-more-than-which-drafter) are quoted as a span
+rather than a value.
+
+The instrument does not yet defend against this. Randomising config order, or
+re-measuring `baseline` at the end of a run as well as the start, would bound it
+— and a sweep should not be started on a card that has just finished one.
 
 Keep a drafter out of the models directory. `catalog.installed` takes the
 alphabetically first non-projector GGUF in each directory, so a drafter dropped

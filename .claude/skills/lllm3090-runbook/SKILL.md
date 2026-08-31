@@ -208,11 +208,14 @@ k drafted tokens *is* a batched forward pass.
 
 **That mechanism was tested on CUDA and confirmed.** Widening 3 -> 7 drops MTP's
 acceptance to 64% on CUDA against 63% on Vulkan -- the same drafts wasted -- but
-costs 8% of decode instead of 22%. On `long-copy`, where acceptance holds at 96%,
-width 7 is a **1.22x win** (2.70x over baseline, or 2.91x stacked with ngram at
-115.1 tok/s, the fastest number on this box). So: **take 3 on Vulkan; on CUDA
-take 3 for prose and code editing and 7 for copy-heavy work.** It is a
-per-workload knob (`--spec-draft-n-max`), not a default worth changing.
+costs 7-8% of decode instead of 22%. On `long-copy`, where acceptance holds at
+96%, width 7 is a **13-22% win** (106.5 tok/s against 94.0, or 115.1 stacked with
+ngram, the fastest number on this box). So: **take 3 on Vulkan; on CUDA take 3
+for prose and code editing and 7 for copy-heavy work.** It is a per-workload knob
+(`--spec-draft-n-max`), not a default worth changing.
+
+The copy-row figures are spans because the width-7 run drifted -- see the
+baseline bullet below. Direction is solid; magnitude is +/-5%.
 
 **A drafter costs VRAM, which is the resource the catalogue defends.** DFlash
 and EAGLE-3 need a separate resident model, so they buy speed with context.
@@ -358,6 +361,16 @@ On a single-GPU box the benchmark and the workload are the same machine.
   CUDA runs 35 minutes apart on an idle card had baselines 0.5% apart on prose
   and **6.8% apart on `long-copy`**, which was a third of the effect being
   measured on that row. Ratios are only comparable within a run.
+- **A baseline in the same run is not enough, and believing it was is a mistake
+  already made here.** It cancels drift *between* runs, not *through* one: the
+  baseline config runs first, so the card it measures is not the card the later
+  configs get. Per-request rates in `sw-baseline.log` show it plainly -- a sweep
+  started cold *gains* 3% as clocks ramp (42.5 -> 43.9), and one started right
+  after another finished *loses 9% over ten minutes* (43.4 -> 41.6 -> 39.5), on
+  the identical invocation. **Never start a sweep on a card that has just
+  finished one**, let it idle first, and read the per-request rates out of the
+  log before trusting a median. Randomised config order or an end-of-run baseline
+  would bound this; neither is implemented.
 - **Three samples is not a measurement when the variance is real.**
   Speculative decoding's acceptance rate swings with content: three runs of
   MTP on the A3B spanned 100.8 to 171.9 tok/s and the median read as *no gain
