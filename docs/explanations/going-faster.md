@@ -7,6 +7,10 @@ from 34.9 to 56.6 tok/s, and several further levers have been looked at. This
 page records all of them — what is already in the engine, what was measured and
 set aside, what it would cost to have, and what is parked and why.
 
+Most of them have now been measured twice, on Vulkan and on CUDA, and **several
+of the verdicts differ by backend**. A lever is therefore reported with the
+backend it applies to, and the one that ships is Vulkan.
+
 If you want the levers themselves explained rather than scored, start with
 [](what-makes-it-fast.md); this page assumes them and reports numbers.
 
@@ -18,26 +22,37 @@ back with one identifier renamed — and each ratio is against its own run's
 baseline, so they compare with each other and not with absolute numbers from
 elsewhere.
 
-| lever | moves | effect | verdict |
-|---|---|---|---|
-| [Multi-token prediction](#already-in-the-engine) | decode | **1.61–1.80×** | **on by default** |
-| [q8_0 KV cache](#already-in-the-engine) | capacity | 2× the conversation | **on by default** |
-| [Flash attention](#already-in-the-engine) | both | not separately measured | **on by default** |
-| [CUDA instead of Vulkan](#cuda-instead-of-vulkan-13-not-34) | both | 1.31× prefill, 1.28× decode | not adopted — costs a toolkit and a per-card binary |
-| [DFlash2 drafter](#measured-and-not-adopted-dflash2) | decode | 0.90–1.04× *against MTP* | rejected — a wash, for 36k tokens of context |
-| [Draft width 7](#draft-width-matters-more-than-which-drafter) | decode | 0.78–0.98× *against width 3* | rejected — the published setting is worse here |
-| [Prompt lookup (ngram)](#measured-and-set-aside-prompt-lookup-drafting) | decode | 0.65–0.88× | rejected — a slowdown on every workload |
-| [ngram stacked on MTP](#measured-and-set-aside-prompt-lookup-drafting) | decode | 0.84–0.90× *against MTP* | rejected — weak drafts displace good ones |
-| [q4_0 KV cache](#already-in-the-engine) | capacity | 4× the conversation, ~0.63× decode | not taken — never measured here |
-| [coopmat2](#still-unanswered-coopmat2) | prefill | unknown | cannot be determined from this build |
-| [TurboQuant KV](#parked) | capacity | claimed ~2.5× against q8_0 | parked — not merged anywhere |
-| [vLLM / AWQ-Marlin](#parked) | throughput | 8× at ten concurrent users | out of scope — this engine serves one |
+**Two effect columns, because there are two backends and they disagree.** The
+shipped engine is Vulkan; the CUDA column is measured but not installed anywhere,
+and a reader who acts on it while running the shipped build will get the Vulkan
+number. Where the two differ, the verdict says which backend it applies to.
 
-**Nothing has displaced multi-token prediction.** The engine's defaults are the
-best combination tried on this card, and the interesting content below is mostly
-*why* — particularly one variable, draft width, which turned out to matter more
-than the choice of drafter and to be a property of the backend rather than of
-any drafter at all.
+| lever | moves | on Vulkan (shipped) | on CUDA (not shipped) | verdict |
+|---|---|---|---|---|
+| [Multi-token prediction](#already-in-the-engine) | decode | **1.61–1.82×** | **1.96–2.22×** | **on by default** — and worth more on CUDA |
+| [q8_0 KV cache](#already-in-the-engine) | capacity | 2× the conversation | same | **on by default** |
+| [Flash attention](#already-in-the-engine) | both | not separately measured | not separately measured | **on by default** |
+| [CUDA instead of Vulkan](#cuda-instead-of-vulkan-13-bare-16-as-shipped) | both | — | 1.31× prefill, 1.28× decode bare, **~1.6×** as shipped | not adopted — costs a toolkit and a per-card binary |
+| [DFlash2 drafter](#measured-and-not-adopted-dflash2) | decode | 0.90–1.04× *against MTP* | 0.92–1.01× *against MTP* | rejected on **both** — a wash, for 36k tokens of context |
+| [Draft width 7](#draft-width-matters-more-than-which-drafter) | decode | 0.78–0.98× *against width 3* | 0.87–1.22× *against width 3* | rejected on Vulkan; on CUDA, copy-heavy work only |
+| [Prompt lookup (ngram)](#measured-and-set-aside-prompt-lookup-drafting) | decode | 0.65–0.88× | 0.92–1.41× | rejected on Vulkan; **wins copying on CUDA** |
+| [ngram stacked on MTP](#measured-and-set-aside-prompt-lookup-drafting) | decode | 0.84–0.90× *against MTP* | 0.86–1.10× *against MTP* | rejected on Vulkan; **the fastest copying config on CUDA** |
+| [q4_0 KV cache](#already-in-the-engine) | capacity | 4× the conversation, ~0.63× decode | not measured | not taken — never measured here |
+| [coopmat2](#still-unanswered-coopmat2) | prefill | unknown | n/a — a Vulkan concept | cannot be determined from this build |
+| [TurboQuant KV](#parked) | capacity | claimed ~2.5× against q8_0 | not merged | parked — not merged anywhere |
+| [vLLM / AWQ-Marlin](#parked) | throughput | 8× at ten concurrent users | a different engine | out of scope — this engine serves one |
+
+**Nothing has displaced multi-token prediction on the backend that ships.** The
+engine's defaults are the best combination tried on Vulkan, and the interesting
+content below is mostly *why* — particularly one variable, draft width, which
+turned out to matter more than the choice of drafter and to be a property of the
+backend rather than of any drafter at all.
+
+On CUDA that last sentence stops being a caveat and becomes the finding: two of
+the three levers rejected above come back, MTP itself grows from 1.6× to 2.0×,
+and the fastest configuration for copy-heavy work is one this page had written
+off. [What the re-measurement settled](#what-the-cuda-re-measurement-settled)
+records which predictions that confirmed and which it killed.
 
 ## Two clocks, not one
 
@@ -116,6 +131,43 @@ Stacking remains worse than MTP alone, and the acceptance column says why:
 adding ngram to MTP takes long-copy from 100% acceptance down to 87%. The weak
 drafts displace good ones rather than adding to them.
 
+### On CUDA it is a different lever
+
+The same sweep, same build commit, same prompts, on the CUDA engine — and the
+verdict does not survive:
+
+| | prose | code-edit | long-copy |
+|---|---|---|---|
+| baseline | 43.2 | 43.6 | 42.4 |
+| `draft-mtp` | 84.9 (1.96×, 85%) | 89.0 (2.04×, 86%) | 94.0 (2.22×, 100%) |
+| `ngram-cache` | 40.2 (0.93×, 36%) | 39.9 (0.92×, 1%) | **59.6 (1.41×**, 57%) |
+| `draft-mtp,ngram-cache` | 72.5 (1.68×, 70%) | 76.7 (1.76×, 77%) | **103.5 (2.44×**, 86%) |
+
+Two things changed and one did not.
+
+**Prompt lookup wins the workload it was built for.** 0.88× on Vulkan, **1.41×**
+on CUDA — at essentially the same acceptance, 58% against 57%. The drafts are as
+good and as numerous as they always were; what changed is that the backend no
+longer charges full price to check them.
+
+**Stacking beats MTP alone on copying.** `draft-mtp,ngram-cache` at 2.44× against
+`draft-mtp`'s 2.22× — 103.5 tok/s against 94.0, the fastest number anywhere in
+this page's width-3 tables. The displacement effect is still visible in the
+acceptance column (100% → 86%, exactly as on Vulkan), so the *drafts* are still
+being displaced. On CUDA the extra drafts are cheap enough that winning some of
+them beats keeping acceptance perfect.
+
+**Prose and code editing are still losses**, 0.93× and 0.92×. Prompt lookup did
+not become a good idea; it became a good idea *for copying*, which is the regime
+it was always advertised for and the one Vulkan would not let it have.
+
+Two numbers in that table should not be leaned on. `draft-mtp,ngram-cache` on
+code-edit spanned 70.3–92.5 tok/s across seven samples — a 32% spread, far wider
+than anything else measured here, so its 1.76× is soft. And `ngram-cache` on
+prose reads 36% acceptance where Vulkan read 24%; acceptance is a property of
+the drafts rather than of the backend, so that gap is unexplained, and nothing
+above rests on it.
+
 **The pin moved because of this.** It was `b10628` (25 August), three days older
 than [PR #27812](https://github.com/ggml-org/llama.cpp/pull/27812) — so the
 engine everyone installed was the one that produced invalid acceptance numbers,
@@ -149,8 +201,28 @@ the catalogue does not carry it.
 The published multipliers are not wrong, they are answering a different
 question: they are all against **no speculation at all**, and this engine has
 run MTP since the head was detected automatically. Against that floor, DFlash2's
-own claim was always narrow — 0.52 tokens of acceptance length — and on this
-backend it does not survive.
+own claim was always narrow — 0.52 tokens of acceptance length — and it does not
+survive on either backend measured here.
+
+### CUDA does not rescue it
+
+DFlash2's published figures are CUDA figures, so of the three rejections on this
+page it was the one most likely to be an artefact of Vulkan. It is not. Same
+sweep on the CUDA engine, width 3, against a baseline of 43.2 / 43.6 / 42.4:
+
+| | prose | code-edit | long-copy |
+|---|---|---|---|
+| `draft-mtp` | **84.9** (1.96×, 85%) | 89.0 (2.04×, 86%) | **94.0** (2.22×, 100%) |
+| `dflash` | 83.8 (1.94×, 80%) | **90.3** (2.07×, 88%) | 86.1 (2.03×, 85%) |
+
+A win of 1% on code editing, a loss of 1% on prose and 8% on copying — against
+4%, 3% and 10% on Vulkan. The same shape, slightly flatter: still a wash, still
+for 1.1 GB and about a fifth of the context. **The rejection stands on both
+backends**, and it is the only one on this page that does.
+
+That matters more than a confirmation usually would, because this page predicted
+the opposite. See [what the re-measurement
+settled](#what-the-cuda-re-measurement-settled).
 
 ### Draft width matters more than which drafter
 
@@ -186,7 +258,50 @@ same shape on AMD and Intel above width 8, explicitly not on CUDA. These numbers
 are below that threshold and on NVIDIA, so the effect is wider than the issue
 describes.
 
-## CUDA instead of Vulkan: 1.3×, not 3–4×
+#### And on CUDA the penalty is a third of the size
+
+This is the cleanest test of the claim that the width penalty belongs to the
+backend, because acceptance and speed can be read separately. Widening 3 → 7,
+each width against its own run's baseline:
+
+| width 3 → 7, on CUDA | prose | code-edit | long-copy |
+|---|---|---|---|
+| `draft-mtp` | **0.92×** | 0.87× | **1.22×** |
+| `dflash` | 1.01× | 1.06× | 0.90× |
+| `draft-mtp,ngram-cache` | 1.00× | 1.04× | **1.19×** |
+
+The width-7 run carries its own `baseline` config so each ratio is against the
+baseline measured alongside it, which the Vulkan tables above cannot offer — the
+Vulkan width-7 sweep recorded no baseline, so its 0.78–0.98× is a ratio of raw
+tok/s across two runs. That distinction is not pedantry here: the two CUDA runs'
+baselines differ by 6.8% on `long-copy`, which is a third of the effect being
+measured on that row.
+
+**Acceptance falls by the same amount on both backends and the speed does not.**
+MTP on prose goes 85% → 64% acceptance on CUDA, against 85% → 63% on Vulkan —
+the drafter is throwing away just as many drafts. Vulkan charges 22% of decode
+for that; CUDA charges 8%. Same wasted drafts, a third of the bill. Acceptance is
+a property of the drafter and the price of a wide verify is a property of the
+backend, and here they are separated cleanly.
+
+**Where acceptance barely falls, width 7 becomes a win.** On `long-copy` MTP
+holds 96% at width 7, and CUDA turns that into **1.22×** — 2.70× over baseline,
+against 2.22× at width 3. Stacked with ngram it reaches **2.91×**, 115.1 tok/s,
+the fastest configuration measured anywhere on this page. Vulkan, at 97%
+acceptance on the same workload, still lost.
+
+So the advice splits by backend rather than being a rule:
+
+- **On Vulkan, take the default 3.** Unchanged, and the engine already does.
+- **On CUDA, 3 is still right for prose and code editing** — MTP loses 8% and
+  13% at width 7 — **and 7 is right for copy-heavy work**, worth 19–22%.
+
+Which is a per-workload knob and not a default, so nothing about it would be
+switched on automatically even if CUDA shipped. `--spec-draft-n-max` is the flag,
+and a user who knows their session is mostly refactoring is the one who should
+set it.
+
+## CUDA instead of Vulkan: 1.3× bare, 1.6× as shipped
 
 Built and measured. Both engines from llama.cpp commit `662a0b0` — the same
 commit as the pinned Vulkan build, so this is a backend comparison and nothing
@@ -224,10 +339,50 @@ a slow first turn is to send a shorter prompt or to keep the cache warm.
 
 Community scoreboards put CUDA about 10% ahead on generation. Here it is **28%**
 — 32.9 to 42.2 tok/s before any speculation. That is the larger of the two
-effects in practice, because decode is what a conversation spends its time
-doing, and it compounds with multi-token prediction rather than competing with
-it: 42.2 with MTP's measured 1.6× on top would be around 67 tok/s, against the
-53 the Vulkan engine delivers today.
+effects in practice, because decode is what a conversation spends its time doing.
+
+The sweep confirms that figure from a second instrument: its `baseline` config is
+no speculation at all, and reads 34.1 / 33.8 / 32.8 tok/s on Vulkan against
+43.2 / 43.6 / 42.4 on CUDA — 1.27 / 1.29 / 1.29×, where `llama-bench` said 1.28.
+Two different harnesses, three workloads, the same number.
+
+### The compounding was underestimated
+
+This section used to predict what CUDA plus speculation would give: *"42.2 with
+MTP's measured 1.6× on top would be around 67 tok/s, against the 53 the Vulkan
+engine delivers today."* That was measured, and **it was 21% low**. The real
+figure is **84.9 tok/s** on prose, and 94.0 on copying.
+
+The arithmetic was fine; the assumption inside it was wrong. It multiplied
+CUDA's bare decode by MTP's *Vulkan* multiplier, and MTP does not have one
+multiplier — it is worth 1.61–1.82× on Vulkan and **1.96–2.22× on CUDA**, at
+acceptance rates that match to within a point (85 / 86 / 100% against
+85 / 84 / 100%). Identical drafts, identical accepts, more speed.
+
+That is the batching argument arriving where it was predicted to. Verifying k
+drafts is a batched forward pass; a backend that gains 10% from a wider batch
+gains it on every verification step, which is most of what a speculating engine
+does. So the two effects do not add, they multiply, and the honest headline for
+a user is not the bare number:
+
+| dense 27B, as each backend would actually serve it | prose | code-edit | long-copy |
+|---|---|---|---|
+| Vulkan + MTP — **what installs today** | 54.8 | 55.7 | 59.7 |
+| CUDA + MTP, same flags | 84.9 | 89.0 | 94.0 |
+| | 1.55× | 1.60× | 1.57× |
+| CUDA, best config costing no VRAM | 84.9 | 89.0 | **115.1** |
+| | 1.55× | 1.60× | **1.93×** |
+
+The last row buys `long-copy` with `--spec-type draft-mtp,ngram-cache` and
+`--spec-draft-n-max 7`, both of which are flags rather than downloads. DFlash2
+would edge code editing to 91.7 tok/s, and it is left out because 1.1 GB of
+drafter is not free — that is the [whole
+argument](#measured-and-not-adopted-dflash2) against it, and it does not stop
+being true because the backend changed.
+
+**CUDA is worth 1.3× to a benchmark and about 1.6× to this engine**, because the
+engine speculates and the benchmark did not. On copy-heavy work, with the ngram
+stack and width 7 that only pay on CUDA, it approaches 2×.
 
 ### And Vulkan does not batch
 
@@ -241,6 +396,38 @@ reward wider batches will punish wider drafts. It also means every drafter
 verdict on this page was measured on the backend least able to make drafting pay,
 and none of them should be treated as settled for CUDA — including the two that
 were rejected.
+
+## What the CUDA re-measurement settled
+
+The paragraph immediately above is a falsifiable prediction, and this page is
+obliged to say how it did rather than to quote it only if it landed. It was
+tested by re-running the whole sweep on the CUDA engine — nine config-runs,
+both draft widths, the same commit, the same prompts, the same seven-samples
+protocol. **It was mostly right, and specifically wrong once.**
+
+| the page predicted | outcome |
+|---|---|
+| ngram's rejection is not settled for CUDA | **right** — 0.88× → 1.41× on copying, a flipped verdict |
+| stacking's rejection is not settled | **right** — it is now the fastest copying config, 2.44× against MTP's 2.22× |
+| the width penalty belongs to the backend | **right** — same acceptance collapse, a third of the speed cost; and width 7 wins copy-heavy work |
+| DFlash2's rejection is not settled | **wrong** — 0.92–1.01× against MTP on CUDA, against 0.90–1.04× on Vulkan. Unchanged. |
+| (unstated) MTP's own multiplier would carry over | **wrong** — 1.61–1.82× on Vulkan, 1.96–2.22× on CUDA |
+
+The DFlash2 miss is the useful one. The argument for re-testing was that Vulkan
+was the backend least able to make drafting pay and DFlash2's own figures were
+CUDA figures — sound reasoning that predicted the wrong result. What it missed
+is that DFlash2 was never losing to the backend; it was losing to **MTP**, which
+is free, and which a better backend speeds up too. A lever measured against a
+moving comparator does not gain on it just because both get faster.
+
+The unstated assumption is the more expensive error, because it was doing work
+in a decision. "1.3× is probably not worth a toolkit" was reasoning about the
+bare number when the engine has never run bare. The figure that decision should
+have been weighing is 1.6×.
+
+None of this changes what installs. The shipped engine is Vulkan, every verdict
+in the Vulkan column stands, and a user who switches ngram on today still gets
+0.65×.
 
 ### What it costs to have
 
@@ -266,10 +453,19 @@ were rejected.
   only the commit is real, and nobody attests to the binary. See [what a build has to
   prove](#what-a-build-has-to-prove).
 
-So the question is no longer whether CUDA is faster — it is — but whether 1.3×
-is worth asking every user for a toolkit, a compiler and a per-card binary, in a
-project whose install is currently one verified download. That is a decision
-about what this project promises, and the measurement does not make it.
+So the question is no longer whether CUDA is faster — it is — but whether **1.6×
+on an ordinary turn, and up to 1.9× on refactoring work**, is worth asking every
+user for a toolkit, a compiler and a per-card binary, in a project whose install
+is currently one verified download. That is a decision about what this project
+promises, and the measurement does not make it.
+
+It is a harder question than it was, and deliberately so. The version of it that
+was asked before the drafters were re-measured — *is 1.3× worth a toolkit?* —
+was weighing the wrong number, because it compared two backends running no
+speculation while the engine has never run that way. Against the shipped
+configuration it is 1.6×, and 1.9× where a session is mostly copying. Whether
+that clears the bar is still a judgement about the install promise rather than
+about the numbers, but it is now being made against the right ones.
 
 ## Still unanswered: coopmat2
 
@@ -331,6 +527,18 @@ their defaults:
 ```
 SWEEP_DRAFT=~/models/.drafters/Qwen3.8-27B-DFlash2-Q4_K_M.gguf \
   dev/spec-sweep.py ~/models/Qwen3.8-27B/Qwen3.8-27B-UD-Q4_K_S.gguf
+```
+
+**Restrict a sweep with the third argument, but keep `baseline` in it.** The
+comma-separated config list exists so a second width does not have to re-run
+everything, and it is tempting to drop the baseline as a known quantity. It is
+not one: across the two CUDA runs here, taken 35 minutes apart on an otherwise
+idle card, the baseline moved 0.5% on prose and **6.8% on `long-copy`**. A ratio
+against the other run's baseline would have carried that drift into the answer,
+on the row where the effect being measured was 19%.
+
+```
+dev/spec-sweep.py MODEL.gguf "" baseline,draft-mtp,mtp+ngram,dflash
 ```
 
 Keep a drafter out of the models directory. `catalog.installed` takes the

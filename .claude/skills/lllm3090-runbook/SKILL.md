@@ -71,6 +71,15 @@ year before anyone measured it. A cold 80k prompt goes 118.2 s -> 90.0 s, so two
 minutes is mostly what the card costs to prefill a dense 27B and no backend
 change makes it thirty seconds.
 
+**But 1.28x is the bare number and the engine is never bare.** With the MTP head
+the engine turns on automatically, the dense 27B runs **54.8 tok/s on Vulkan
+against 84.9 on CUDA -- 1.55x**, because MTP is worth 1.6x on Vulkan and 2.0x on
+CUDA and the two multiply. On copy-heavy work, with levers that only pay on CUDA,
+it reaches 1.9x. Quote 1.6x, not 1.3x, when the question is what a user would
+feel; quote 1.28x only when comparing backends with speculation off. Measuring a
+backend with the product's features disabled understated the answer by a quarter
+here, and that mistake was load-bearing in a decision not to adopt it.
+
 **Ubuntu's own CUDA cannot build it.** 26.04 ships 13.1 in multiverse; glibc
 2.43 declares `rsqrt`/`rsqrtf` `noexcept(true)` and CUDA 13.1 declares them
 bare, so `nvcc` refuses anything including `<math.h>`. CUDA 13.3 tests for glibc
@@ -142,7 +151,18 @@ acceptance, because the next token is trivially predictable when the output is
 copying a known input. MTP's figures are also the ones the Vulkan bug below did
 *not* touch -- they are unchanged across the fix.
 
-**ngram is a regression, and stacking it with MTP is worse than MTP alone.**
+**ngram is a regression on Vulkan and a win on CUDA -- this is the one verdict
+here that flips with the backend.** Everything in the next two paragraphs is
+about the Vulkan build that ships. On the CUDA engine, same commit and prompts,
+`ngram-cache` goes 0.88x -> **1.41x** on copy-heavy work and
+`draft-mtp,ngram-cache` reaches **2.44x**, beating `draft-mtp` alone at 2.22x --
+the fastest width-3 configuration measured on this box. Prose and code editing
+stay losses (0.93x, 0.92x). Acceptance is near-identical on both backends, so
+what changed is the price of checking drafts, not their quality. Do not carry a
+Vulkan speculation verdict onto CUDA, in either direction.
+
+**On Vulkan: ngram is a regression, and stacking it with MTP is worse than MTP
+alone.**
 Measured on Qwen3.8-27B on b10715, on general prose: `ngram-cache` alone
 **0.65x**, `draft-mtp,ngram-cache` 1.35x, `draft-mtp` alone 1.61x. So the stack
 does beat ngram by itself -- it just costs you a sixth of what MTP was already
@@ -184,8 +204,15 @@ DFlash2 14%, and acceptance falls for both (85% -> 63%, 80% -> 67%). **Take
 llama.cpp's default of 3 on Vulkan**; the engine passes no width and so already
 does. The mechanism is that Vulkan gets nothing from a wider batch -- pp512
 1026.9 against pp4096 1014.0, where CUDA goes 1217.4 -> 1343.8 -- and verifying
-k drafted tokens *is* a batched forward pass. Expect these verdicts to differ on
-CUDA; none of them are settled there.
+k drafted tokens *is* a batched forward pass.
+
+**That mechanism was tested on CUDA and confirmed.** Widening 3 -> 7 drops MTP's
+acceptance to 64% on CUDA against 63% on Vulkan -- the same drafts wasted -- but
+costs 8% of decode instead of 22%. On `long-copy`, where acceptance holds at 96%,
+width 7 is a **1.22x win** (2.70x over baseline, or 2.91x stacked with ngram at
+115.1 tok/s, the fastest number on this box). So: **take 3 on Vulkan; on CUDA
+take 3 for prose and code editing and 7 for copy-heavy work.** It is a
+per-workload knob (`--spec-draft-n-max`), not a default worth changing.
 
 **A drafter costs VRAM, which is the resource the catalogue defends.** DFlash
 and EAGLE-3 need a separate resident model, so they buy speed with context.
@@ -194,6 +221,14 @@ is 0.90-1.04x -- a win of 4% on code editing, losses of 3% and 10% on prose and
 copying -- for 1.1 GB, which is ~36k tokens of context, taking the dense 27B
 from 172k to 136k. Its published 2.26-3.55x is against *no speculation at all*,
 which is not the floor here.
+
+**CUDA does not rescue it, and that was a surprise** -- its published figures are
+CUDA figures, and it was the rejection most expected to flip. On the CUDA engine
+it is 0.92-1.01x against MTP, against 0.90-1.04x on Vulkan: unchanged. It was
+never losing to the backend, it was losing to MTP, which is free and which a
+faster backend speeds up too. **A lever measured against a moving comparator does
+not gain on it just because both get faster** -- worth remembering before
+re-testing anything else on new hardware.
 Prefer MTP, which lives inside the checkpoint and costs only its own weights.
 
 **Check whether a checkpoint has the head before downloading a variant:**
@@ -317,6 +352,12 @@ On a single-GPU box the benchmark and the workload are the same machine.
 - Discard anything that overlapped real use. A live session against the same
   engine once produced an apparent 47% throughput regression that was pure
   contention.
+- **Every run carries its own baseline, even when re-running one variable.**
+  `dev/spec-sweep.py` takes a comma-separated config list as its third argument,
+  and dropping `baseline` from it to save eight minutes is a false economy: two
+  CUDA runs 35 minutes apart on an idle card had baselines 0.5% apart on prose
+  and **6.8% apart on `long-copy`**, which was a third of the effect being
+  measured on that row. Ratios are only comparable within a run.
 - **Three samples is not a measurement when the variance is real.**
   Speculative decoding's acceptance rate swings with content: three runs of
   MTP on the A3B spanned 100.8 to 171.9 tok/s and the median read as *no gain
