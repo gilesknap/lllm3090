@@ -250,7 +250,9 @@ with the same flags `lllm3090.engine.start` uses, and that correspondence is the
 point. Its `baseline` config is no speculation at all, so MTP appears as a
 config rather than as the floor. Point `SWEEP_DRAFT` at a drafter GGUF to
 include DFlash2, and `SWEEP_NMAX` at a draft width, which applies to every
-config so that a comparison of drafters is not also a comparison of widths:
+draft-model config so that a comparison of drafters is not also a comparison of
+widths. The n-gram modes are sized by their own `--spec-ngram-*` knobs and keep
+their defaults:
 
 ```
 SWEEP_DRAFT=~/models/.drafters/Qwen3.8-27B-DFlash2-Q4_K_M.gguf \

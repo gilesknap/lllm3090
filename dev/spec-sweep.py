@@ -81,19 +81,23 @@ BIG_FILE = os.path.join(
 #: is skipped when there is none.
 DRAFT = os.environ.get("SWEEP_DRAFT")
 
-#: How many tokens a drafter proposes per verification step. Applied to every
-#: config, because it is a property of the sweep and not of one drafter: leaving
-#: it to each config's own default meant comparing DFlash2 at its published 7
-#: against MTP at llama.cpp's 3, which is two variables and reads as a verdict
-#: on the drafter. On Vulkan the width alone is worth more than the choice of
-#: drafter -- see docs/explanations/going-faster.md.
+#: How many tokens a draft *model* proposes per verification step, set here
+#: rather than left to each config, because leaving it meant comparing DFlash2
+#: at its published 7 against MTP at llama.cpp's 3 -- two variables, reading as
+#: a verdict on the drafter when the width was worth more than the choice of
+#: drafter. See docs/explanations/going-faster.md.
+#:
+#: It reaches only the draft-model configs. The n-gram modes are sized by their
+#: own `--spec-ngram-*` knobs, and which of those `ngram-cache` reads has not
+#: been established here -- so it keeps its defaults, and the header says the
+#: width covers the draft models rather than claiming to cover everything.
 NMAX = os.environ.get("SWEEP_NMAX", "3")
 WIDTH = ["--spec-draft-n-max", NMAX]
 
 CONFIGS = [
     ("baseline", []),
     ("draft-mtp", ["--spec-type", "draft-mtp", *WIDTH]),
-    ("ngram-cache", ["--spec-type", "ngram-cache", *WIDTH]),
+    ("ngram-cache", ["--spec-type", "ngram-cache"]),
     ("mtp+ngram", ["--spec-type", "draft-mtp,ngram-cache", *WIDTH]),
 ]
 
@@ -199,7 +203,8 @@ print(f"model:   {MODEL}")
 print(f"samples: {SAMPLES} timed + 1 discarded warm-up, per prompt per config")
 print(f"drafter: {DRAFT}" if DRAFT
       else "drafter: none -- set SWEEP_DRAFT to include the dflash config")
-print(f"n-max:   {NMAX} (every drafter, so a config is not also a width)")
+print(f"n-max:   {NMAX} (every draft model, so a config is not also a width; "
+      "the ngram modes keep their own defaults)")
 print(f"engine:  {D}")
 print(f"build:   {probe('--version')}")
 # Names the backend -- 'Vulkan0' or 'CUDA0' -- and so distinguishes two runs
