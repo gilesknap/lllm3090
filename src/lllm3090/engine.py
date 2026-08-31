@@ -19,7 +19,7 @@ import urllib.request
 from importlib import resources
 from pathlib import Path
 
-from . import config
+from . import config, gguf
 
 #: Colour and cursor escapes llama.cpp writes when it thinks it has a terminal.
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -198,9 +198,10 @@ def start(
     process is launched.
 
     ``ctx`` is the whole KV pool and ``parallel`` is how many conversations
-    share it, so each slot gets ``ctx // parallel`` tokens. Sizing the pool for
-    one conversation is what makes an agent's subagents queue behind their
-    parent, so the default is two.
+    share it, so each slot gets ``ctx // parallel`` tokens. What to pass is
+    decided by :func:`lllm3090.catalog.plan`, which fills one conversation to
+    the model's ceiling before opening a second; an agent that wants room for a
+    subagent has to ask for it.
 
     The cache is quantised to ``q8_0``, which halves its cost per token for
     close to no quality loss and is what makes long context affordable on 24 GB.
@@ -250,6 +251,19 @@ def start(
                 "--cache-type-k", "q8_0",
                 "--cache-type-v", "q8_0",
                 "--jinja",
+                # Multi-token prediction, when the checkpoint carries the head.
+                #
+                # The model drafts its own next few tokens and verifies them in
+                # one pass, so accepted drafts cost a fraction of a forward
+                # pass. Measured on the reference 3090: Qwen3.8-27B 34.9 ->
+                # 56.6 tok/s (1.62x), Qwen3.6-35B-A3B-MTP 130.5 -> 171.8
+                # (1.32x), 179.9 on code editing.
+                #
+                # Read from the file rather than the catalogue on purpose: only
+                # the checkpoint on disk decides whether the head is there, and
+                # llama.cpp refuses to start with this flag against one that
+                # lacks it. See lllm3090.gguf.
+                *(["--spec-type", "draft-mtp"] if gguf.has_mtp(model_path) else []),
                 # Vision: the projector is a separate GGUF that turns image
                 # input into embeddings the model can attend to.
                 *(["--mmproj", mmproj] if mmproj else []),

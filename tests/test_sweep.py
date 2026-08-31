@@ -50,9 +50,12 @@ def test_the_derivation_reproduces_every_catalogue_figure():
 def test_every_catalogue_entry_has_a_fixture():
     """A model added without a fixture is a model the sweep was never checked on."""
     names = {m.name for m in catalog.load_catalog()}
-    # Two catalogue entries are the same checkpoint at different bit-rates, so
-    # they share one config and one fixture.
+    # Several entries are the same base checkpoint -- a different bit-rate, or
+    # a build with the MTP head preserved -- so they share one config and one
+    # fixture. The KV arithmetic is a property of the architecture, not of the
+    # quantiser or of whether a speculation head was kept.
     names.discard("Qwen3.6-35B-A3B-Q4KS")
+    names.discard("Qwen3.6-35B-A3B-MTP")
     assert names <= set(CONFIGS), f"no config fixture for {names - set(CONFIGS)}"
 
 
@@ -176,32 +179,35 @@ def test_min_vram_is_exactly_the_card_that_clears_the_agent_floor(model):
 def test_fitting_and_being_usable_are_reported_as_different_things():
     """The distinction the catalogue was built to make, enforced in the UI data.
 
-    Two of the models most often recommended for a 24 GB card fit it and leave
-    a window an agent cannot use. A front end with a single "fits" flag has to
-    render those as successes, which is how someone spends 20 GB of disk before
-    finding out.
+    A model can load on a card with room to spare and still leave a window an
+    agent cannot use. A front end with a single "fits" flag has to render that
+    as a success, which is how someone spends 20 GB of disk before finding out.
+
+    Note what fixed the real case: `Qwen3.6-35B-A3B-Q4KS` used to be tight on a
+    24 GB desktop at 34k, because the plan split the pool into two slots by
+    default. Filling one window first gives it 69k and it is no longer tight.
+    A rule about slots turned out to be a rule about usability.
     """
-    tight = next(
-        m for m in catalog.load_catalog() if m.name == "Qwen3.6-35B-A3B-Q4KS"
+    tight = catalog.Model(
+        id="t", name="T", repo="x/y", file="y.gguf", size_gb=20.5, kind="dense",
+        params="", kv_kib_per_token=64, max_ctx=262144,
     )
-
-    def state_on(vram_mib: int) -> tuple[str, str]:
-        card = _card(vram_mib)
-        return catalog.status(
-            tight, catalog.plan(tight, desktop=True, profile=card),
-            catalog.fit(tight, True, card), card,
-        )
-
-    # It loads on a 24 GB card with room to spare, and still cannot hold an
-    # agent's system prompt at the two slots the plan hands out by default.
-    assert catalog.fit(tight, True, _card(24576)).fits, "the premise is that it fits"
-    state, note = state_on(24576)
+    card = _card(24576)
+    f, p = catalog.fit(tight, True, card), catalog.plan(
+        tight, desktop=True, profile=card
+    )
+    assert f.fits, "the premise is that it fits"
+    state, note = catalog.status(tight, p, f, card)
     assert state == catalog.STATUS_TIGHT
     assert "40k" in note and "GB would clear it" in note
 
-    # The same entry on a 5090 is simply fine, which is the whole point of
-    # computing this per card rather than declaring it once for a 3090.
-    assert state_on(32768)[0] == catalog.STATUS_OK
+    # And the same entry on a larger card is simply fine, which is why this is
+    # computed per card rather than declared once.
+    big = _card(32768)
+    assert catalog.status(
+        tight, catalog.plan(tight, desktop=True, profile=big),
+        catalog.fit(tight, True, big), big,
+    )[0] == catalog.STATUS_OK
 
 
 def test_a_model_no_card_can_rescue_does_not_send_you_shopping():

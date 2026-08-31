@@ -10,7 +10,39 @@ change is only visible in the source it does not need a line here.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **Multi-token prediction is turned on by itself** when a checkpoint carries
+  the head. The model drafts its own next tokens and verifies them in one pass;
+  measured on the reference 3090, `Qwen3.8-27B` goes from 34.9 to 56.6 tok/s
+  (1.62x) and `Qwen3.6-35B-A3B-MTP` from 130.5 to 171.8 (1.32x, and 179.9 on
+  code editing). Nothing to configure: the checkpoint is read at start, and the
+  flag is added only when the tensors are actually there — a catalogue field
+  claiming MTP would turn a working start into a failed one the day a repo
+  shipped a build with the head stripped.
+- `Qwen3.6-35B-A3B-MTP` in the catalogue, and it is now the recommendation. It
+  is the same model as before with the head preserved: same context on this
+  card, 46 tok/s faster.
+
+### Changed
+
+- **One conversation is filled to the model's ceiling before a second slot is
+  opened.** The pool is a fixed number of tokens, so splitting it does not
+  create capacity — it halves the window and buys concurrency with it. Slots
+  are now granted only in whole windows, where the architecture has run out
+  before the card has and the spare cache could not have become a longer
+  conversation anyway.
+
+  On a 24 GB desktop that is worth a great deal: `Qwen3.6-35B-A3B` goes from
+  169k x 2 to the full 256k, `Qwen3.8-27B` from 84k x 2 to 168k, and
+  `Gemma-4-26B-A4B` from 103k x 2 to 207k. Nothing loses window.
+
+  **If you run an agent, ask for two slots** — `lllm3090 start <model>
+  --parallel 2`. A single slot has nowhere to admit a subagent, so the
+  scheduler serialises them and each one evicts the parent's cached prefix.
+  `lllm3090 claude` now says so when it finds a one-slot engine.
+- `Qwen3.6-35B-A3B-Q4KS` is no longer flagged as tight on a 24 GB desktop. It
+  was tight only because the pool was being split; one window gives it 69k.
 
 ## [0.6.0] — 2026-08-28
 

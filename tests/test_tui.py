@@ -693,7 +693,10 @@ def test_a_slot_count_below_one_is_not_a_plan():
         with pytest.raises(ValueError, match="at least 1"):
             catalog.launch_plan("Qwen3-8B", bad)
     assert catalog.launch_plan("Qwen3-8B", 1).parallel == 1
-    assert catalog.launch_plan("Qwen3-8B").parallel == config.DEFAULT_PARALLEL
+    # No count means the automatic rule decides, and it is not DEFAULT_PARALLEL
+    # any more: Qwen3-8B is rope-capped with room for four whole 32k windows,
+    # so it gets four. See config.DEFAULT_PARALLEL for why that constant stayed.
+    assert catalog.launch_plan("Qwen3-8B").parallel == 4
 
 
 # ---------------------------------------------------------------------------

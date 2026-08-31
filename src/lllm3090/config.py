@@ -92,7 +92,7 @@ VISION_WORKSPACE_RESERVE_MIB = 1024
 #: message fails -- and a window only slightly above it leaves no room to work.
 AGENT_PROMPT_FLOOR = 40_000
 
-#: How many conversations must fit at once.
+#: How many conversations an agent harness needs at once.
 #:
 #: The KV cache is a single pool shared by every concurrent request, not a
 #: per-conversation budget. An agent that spawns subagents therefore needs room
@@ -101,6 +101,15 @@ AGENT_PROMPT_FLOOR = 40_000
 #: serialises them -- and the subagent's prefill evicts the parent's cached
 #: prefix, so the parent then pays a full cold prefill on its next turn.
 #: Two is the minimum that keeps a parent and one subagent resident together.
+#:
+#: **This is no longer what ``plan()`` hands out automatically.** It used to
+#: be, which meant every model's window was halved whether or not the second
+#: half was ever used -- the 35B-A3B gave 169k twice on a desktop when one
+#: conversation could have had the full 256k. ``plan()`` now fills the model's
+#: ceiling first and grants a second slot only where it costs nothing (see
+#: :func:`lllm3090.catalog.plan`). This value remains what an agent should ask
+#: for explicitly -- ``lllm3090 start <model> --parallel 2`` -- and what an
+#: uncatalogued GGUF falls back to.
 DEFAULT_PARALLEL = 2
 
 #: Ceiling on slots handed out automatically.

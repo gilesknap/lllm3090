@@ -69,7 +69,7 @@ models:
     max_ctx: 262144
     expected_tok_s: 126
     verified: true
-    tags: [general, agentic, long-context, recommended]
+    tags: [general, agentic, long-context]
     notes: >-
       Sparse: only 3B parameters are read per token, so it decodes far faster
       than its size suggests -- measured at 126 tok/s on a short prompt and
@@ -83,6 +83,30 @@ models:
       recommendation: the fastest model that also reaches a full 262k context.
       gpt-oss-20b decodes faster at 160 tok/s, in 128k of room -- take that one
       if the work fits and speed matters more than the window.
+
+  - id: qwen3.6-35b-a3b-mtp
+    name: Qwen3.6-35B-A3B-MTP
+    repo: unsloth/Qwen3.6-35B-A3B-MTP-GGUF
+    file: Qwen3.6-35B-A3B-UD-IQ4_XS.gguf
+    size_gb: 18.21
+    kind: moe
+    params: 35B total, 3B active (256 experts, 8 per token) + an MTP head
+    kv_kib_per_token: 20
+    max_ctx: 262144
+    expected_tok_s: 172
+    verified: true
+    tags: [general, agentic, long-context, recommended]
+    notes: >-
+      The recommendation with its multi-token prediction head preserved. The
+      model drafts its own next tokens and verifies them in one pass, which the
+      engine turns on by itself once it sees the head in the file. Measured
+      here: 130 tok/s without it, 172 with, and 180 on code editing -- the gain
+      rises with how predictable the output is. The head costs 0.48 GB of
+      weights, which comes out of the cache; on a text console that is free,
+      because the window is already at the architecture's ceiling, and on a
+      desktop it is the only reason to prefer the plain build. Speculation
+      changes which token wins a near-tie, so output is not byte-identical to
+      the plain build -- neither is the plain build with itself, twice.
 
   - id: qwen3.6-35b-a3b-q4ks
     name: Qwen3.6-35B-A3B-Q4KS

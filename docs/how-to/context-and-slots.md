@@ -7,28 +7,54 @@ Starting a model involves two numbers that are easy to confuse:
   pool divided by the slot count, and by the model's RoPE ceiling.
 
 ```bash
-lllm3090 start Qwen3.8-27B                 # default: 2 slots
-lllm3090 start Qwen3.8-27B --parallel 1    # one conversation, biggest window
+lllm3090 start Qwen3.8-27B                 # automatic: fills the window first
+lllm3090 start Qwen3.8-27B --parallel 2    # room for an agent and one subagent
 lllm3090 start Qwen3.8-27B --parallel 4    # four conversations, quarter each
 lllm3090 start Qwen3.8-27B --ctx 131072    # set the whole pool by hand
 ```
 
-The default is **two**, so an agent and one subagent fit at once. See
-[](../explanations/what-fits.md) for why a pool sized for exactly one
-conversation makes subagents serialise and evict their parent's cached prefix.
+## The automatic rule: fill the window, then add free slots
+
+The pool is a fixed number of tokens, so splitting it in two does not create
+capacity — it halves the conversation and buys concurrency with the difference.
+That trade is only free in one case: when the **architecture** runs out before
+the card does, and the cache past the model's RoPE ceiling could not have become
+a longer conversation anyway.
+
+So slots are granted in **whole windows**. A slot that would get less than the
+ceiling is not granted, because it would shorten the conversation you have to
+make room for one you may not have wanted.
+
+This changed in 0.7.0. The default used to be two slots always, which cost
+`Qwen3.6-35B-A3B` 87k of window on a desktop to reserve a second conversation
+nobody had asked for.
+
+**If you are running an agent, ask for two.** An agent that spawns subagents
+needs room for more than one conversation: with a single slot the scheduler
+serialises them, and each subagent's prefill evicts the parent's cached prefix,
+so the parent pays a full cold prefill on its next turn. `lllm3090 claude` says
+so when it finds a one-slot engine.
 
 ## What each model gives you
 
-Per-conversation window at each slot count. "(max)" means the model's RoPE
-ceiling was reached and there is spare VRAM that cannot be spent on context:
+Per-conversation window on a 24 GB card with a desktop session running. "(max)"
+means the model's RoPE ceiling was reached:
 
-| model | `--parallel 1` | 2 (default) | 4 |
+| model | automatic | `--parallel 1` | `--parallel 2` |
 |---|---|---|---|
-| Qwen3.8-27B | 203k | 101k | 50k |
-| Qwen3.6-35B-A3B | 256k (max) | 212k | 106k |
-| Qwen3.6-35B-A3B-Q4KS | 122k | 61k | 30k |
-| gpt-oss-20b | 128k (max) | **128k (max), 4 slots** | 128k (max) |
-| Qwen3-8B | 32k (max) | **32k (max), 4 slots** | 32k (max) |
+| Qwen3.8-27B | **168k x1** | 168k | 84k |
+| Qwen3.6-35B-A3B | **256k (max) x1** | 256k (max) | 169k |
+| Qwen3.6-35B-A3B-MTP | **256k (max) x1** | 256k (max) | 148k |
+| Qwen3.6-35B-A3B-Q4KS | **69k x1** | 69k | 34k |
+| gpt-oss-20b | **128k (max) x4** | 128k (max) | 128k (max) |
+| Qwen3-8B | **32k (max) x4** | 32k (max) | 32k (max) |
+| Gemma-4-26B-A4B | **207k x1** | 207k | 103k |
+| Muse-Glimmer-30B | **128k (max) x2** | 128k (max) | 128k (max) |
+| Gemma-4-12B-QAT | **256k (max) x4** | 256k (max) | 256k (max) |
+
+Figures are computed for the detected card, so `lllm3090 models` is authoritative
+on yours; these are the reference 3090's. Running headless returns about 2.4 GiB
+and moves several rows up.
 
 Two rows behave differently from the rest. **`gpt-oss-20b` and `Qwen3-8B` hit
 their architectural ceiling long before they run out of VRAM**, so extra slots

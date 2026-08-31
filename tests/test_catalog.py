@@ -85,18 +85,47 @@ def test_the_driver_reservation_is_taken_off_the_top():
             assert budget <= profile.vram_mib - profile.driver_reserve_mib
 
 
-def test_plan_leaves_room_for_a_subagent():
-    """The default must admit a second conversation, not just a large first one.
+def test_plan_fills_the_window_before_opening_a_second_slot():
+    """The pool is fixed, so a second slot is bought with the first one's window.
 
-    A pool sized for one session is what makes subagents serialise behind their
-    parent and evict its cached prefix.
+    Splitting the cache does not create capacity -- it halves the conversation
+    and spends the difference on concurrency. That is only free where the
+    architecture runs out before the card does, and the cache past ``max_ctx``
+    could not have become a longer conversation anyway.
+
+    So: either every slot gets the model's whole ceiling, or there is exactly
+    one slot. A plan with two short slots is the thing this rule exists to stop
+    -- it used to be the default, and it cost the 35B-A3B 87k of window on a
+    desktop to reserve a second conversation nobody had asked for.
     """
     for m in catalog.load_catalog():
-        p = catalog.plan(m)
-        assert p.parallel >= 2, f"{m.id} leaves no room for a subagent"
-        # Each slot must still hold an agent harness's system prompt (~40k)
-        # plus room to work.
-        assert p.per_session >= 32768, f"{m.id} gives only {p.per_session} per slot"
+        for desktop in (True, False):
+            p = catalog.plan(m, desktop=desktop)
+            if p.parallel == 1:
+                continue
+            assert p.per_session == m.max_ctx, (
+                f"{m.id} (desktop={desktop}) opened {p.parallel} slots of "
+                f"{p.per_session}, short of its {m.max_ctx} ceiling"
+            )
+
+
+def test_the_extra_slots_really_are_free():
+    """A granted slot must not have come out of the first conversation.
+
+    The guarantee is comparative, not absolute: whatever the automatic plan
+    hands out, a single slot could not have held more.
+    """
+    for m in catalog.load_catalog():
+        for desktop in (True, False):
+            f = catalog.fit(m, desktop)
+            if not f.fits:
+                continue
+            p = catalog.plan(m, desktop=desktop)
+            alone = min(f.pool_q8, m.max_ctx)
+            assert p.per_session >= (alone // 1024) * 1024, (
+                f"{m.id} (desktop={desktop}) gives {p.per_session} per slot "
+                f"where one slot would have held {alone}"
+            )
 
 
 def test_small_models_get_their_whole_window():
@@ -112,20 +141,23 @@ def test_rope_capped_models_are_given_the_free_slots():
 
     Rope-capping says the *window* is bounded by the architecture rather than by
     VRAM. It does not promise a surplus large enough for another whole slot: a
-    model can afford exactly the default number of full windows and no more, and
-    that is an honest plan rather than a missed opportunity. What must hold is
-    that no slot is short-changed.
+    model can be rope-capped with exactly one window's worth of pool, and that
+    is an honest plan rather than a missed opportunity. What must hold is that
+    no slot is short-changed, and that a whole spare window is never left unused.
     """
     for m in catalog.load_catalog():
+        f = catalog.fit(m)
         p = catalog.plan(m)
         if p.capped_by != "rope":
             continue
-        assert p.parallel >= config.DEFAULT_PARALLEL, (
-            f"{m.id} is rope-capped but cannot seat the default slot count"
-        )
-        assert p.parallel <= config.MAX_AUTO_PARALLEL
         # Free means free: every slot still gets the whole window.
         assert p.per_session == m.max_ctx
+        assert 1 <= p.parallel <= config.MAX_AUTO_PARALLEL
+        affordable = min(f.pool_q8 // m.max_ctx, config.MAX_AUTO_PARALLEL)
+        assert p.parallel == max(1, affordable), (
+            f"{m.id} can seat {affordable} whole windows but was given "
+            f"{p.parallel}"
+        )
 
 
 def test_an_explicit_slot_count_is_honoured_exactly():
