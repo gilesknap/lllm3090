@@ -35,10 +35,10 @@ Not levers to pull, but the baseline everything else is measured against — see
   `--spec-type draft-mtp` is added on evidence rather than on a catalogue claim:
   `lllm3090.gguf.has_mtp` reads the tensor names out of the file, because
   llama.cpp refuses to start with that flag against a checkpoint lacking the
-  head. Measured on this card, on the pinned build: **34.9 → 56.6 tok/s
-  (1.62×)** on the dense 27B, 130.5 → 171.8 (1.32×) on the sparse 35B. The
-  table in the next section re-measures the dense model on a newer engine and
-  lands in the same place.
+  head. Measured on this card, on b10628: **34.9 → 56.6 tok/s (1.62×)** on the
+  dense 27B, 130.5 → 171.8 (1.32×) on the sparse 35B. The tables below
+  re-measure the dense model on b10715 and land in the same place, which is one
+  of the reasons the pin was allowed to move.
 - **All layers on the GPU** (`--n-gpu-layers 999`). Nothing in the catalogue is
   allowed to need offload; a model that does not fit is not offered.
 - **Flash attention on** (`-fa on`), not left at `auto`.
@@ -89,11 +89,12 @@ Stacking remains worse than MTP alone, and the acceptance column says why:
 adding ngram to MTP takes long-copy from 100% acceptance down to 87%. The weak
 drafts displace good ones rather than adding to them.
 
-**The pinned build still predates the fix.** `engines.LLAMA_BUILD` is `b10628`
-(25 August); [PR #27812](https://github.com/ggml-org/llama.cpp/pull/27812)
-merged on the 28th. Anything measured on that build reproduces the invalid
-acceptance numbers, so a sweep that matters needs `SWEEP_BUILD` set to a newer
-tag until the pin moves.
+**The pin moved because of this.** It was `b10628` (25 August), three days older
+than [PR #27812](https://github.com/ggml-org/llama.cpp/pull/27812) — so the
+engine everyone installed was the one that produced invalid acceptance numbers,
+and any measurement taken on it had to be discounted. `engines.LLAMA_BUILD` is
+now `b10715`, which is also what the sweep defaults to, so a sweep and the
+served engine are the same build again.
 
 ## Measured and not adopted: DFlash2
 
@@ -269,13 +270,13 @@ It never sweeps the installed engine. Builds to measure are fetched beside it,
 one directory per upstream tag:
 
 ```
-lllm3090 fetch-engine --build b10715
-SWEEP_BUILD=b10715 dev/spec-sweep.py MODEL.gguf
+lllm3090 fetch-engine --build b10800
+SWEEP_BUILD=b10800 dev/spec-sweep.py MODEL.gguf
 ```
 
 That separation is what makes an upgrade decidable at all: choosing between
-b10628 and b10715 means running both, which is impossible if measuring one
-installs it over the other. `SWEEP_LLAMA_DIR` remains as an escape hatch for a
+b10628 and b10715 meant running both, which is impossible if measuring one
+installs it over the other. It is how the pin moved. `SWEEP_LLAMA_DIR` remains as an escape hatch for a
 build with no tag to name it by — a locally compiled CUDA engine, when that
 happens. Every run prints the build number and the device line it found,
 because two tables of tokens per second that do not say what produced them

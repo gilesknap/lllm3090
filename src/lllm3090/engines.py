@@ -31,11 +31,11 @@ from pathlib import Path
 from . import config
 
 #: The build the product runs.
-LLAMA_BUILD = "b10628"
+LLAMA_BUILD = "b10715"
 
 #: Its digest. See the module docstring for why this is written down rather
 #: than only asked for at fetch time.
-LLAMA_SHA256 = "c64b6d5820ea6dc3227495e2c30c397fb73c24158291cfb7ef99892a708605a6"
+LLAMA_SHA256 = "1246c764f630f1cfc7c0921353a9719603c5d9ccfa7ced621bac216ffd9b2d87"
 
 #: Vulkan rather than CUDA, for the reason in docs/tutorials/installation.md:
 #: upstream publishes no CUDA archive for Linux, only for Windows.

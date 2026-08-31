@@ -50,6 +50,18 @@ change is only visible in the source it does not need a line here.
 
 ### Changed
 
+- **The engine is now llama.cpp `b10715`**, up from `b10628`. The old pin
+  predated a Vulkan bug fix by three days: the graph optimiser reordered nodes
+  across aliased tensor views, so the model accepted draft tokens it had not
+  chosen — wrong output at temperature 0, non-deterministic runs, and
+  speculative-decoding acceptance figures that could not be believed. Neither
+  upgrading the package nor `lllm3090 setup` will replace an engine that is
+  already there, so take this one with `lllm3090 install-engine --force`.
+
+  Verified on the reference 3090 before moving: the dense 27B and the vision
+  model both start, answer and hold their context plans, multi-token prediction
+  is still detected from the checkpoint, and MTP's measured gain is unchanged at
+  1.61x.
 - **One conversation is filled to the model's ceiling, and the pool is split
   only when refusing to would strand too much of the card.** Splitting does not
   create capacity — it shortens every conversation and buys concurrency with

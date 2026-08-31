@@ -17,8 +17,8 @@ import pytest
 
 from lllm3090 import config, engines
 
-PINNED = "b10628"
-CANDIDATE = "b10715"
+PINNED = "b10715"
+CANDIDATE = "b10800"
 
 
 def _archive(payload: bytes = b"#!/bin/sh\n") -> bytes:
@@ -117,7 +117,7 @@ def test_a_benchmark_build_never_lands_on_the_installed_one(monkeypatch, tmp_pat
 
 
 def test_the_asset_name_follows_the_tag():
-    assert engines.asset(CANDIDATE) == "llama-b10715-bin-ubuntu-vulkan-x64.tar.gz"
+    assert engines.asset(CANDIDATE) == "llama-b10800-bin-ubuntu-vulkan-x64.tar.gz"
     assert engines.url(CANDIDATE).endswith(f"/{CANDIDATE}/{engines.asset(CANDIDATE)}")
 
 
@@ -144,9 +144,9 @@ def _api(monkeypatch, body: bytes):
 def test_the_published_digest_is_read_for_the_right_asset(monkeypatch):
     _api(monkeypatch, (
         b'{"assets": ['
-        b'{"name": "llama-b10715-bin-win-vulkan-x64.zip", "digest": "sha256:'
+        b'{"name": "llama-b10800-bin-win-vulkan-x64.zip", "digest": "sha256:'
         + b"f" * 64 + b'"},'
-        b'{"name": "llama-b10715-bin-ubuntu-vulkan-x64.tar.gz", "digest": "sha256:'
+        b'{"name": "llama-b10800-bin-ubuntu-vulkan-x64.tar.gz", "digest": "sha256:'
         + b"a" * 64 + b'"}]}'
     ))
     assert engines.published_digest(CANDIDATE) == "a" * 64
