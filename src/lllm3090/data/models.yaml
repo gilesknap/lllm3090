@@ -11,6 +11,19 @@
 #                      engine provisions them per-token.
 #   max_ctx            the model's own RoPE ceiling -- past it lies incoherence,
 #                      not merely cost, so the panel never offers more.
+#   mtp                whether the checkpoint carries a multi-token prediction
+#   full_attention_layers
+#                      head, and how many of its layers keep a KV cache. Only
+#                      needed together: the head IS one more full-attention
+#                      layer, and that is how its cache is priced before the
+#                      model is downloaded. Both come from the GGUF header --
+#                      (block_count - 1) / full_attention_interval, where the
+#                      -1 is the head, which is why block_count reads 65 for a
+#                      64-layer model -- and a test checks them against the
+#                      real file wherever it is on disk. What actually launches
+#                      with --spec-type draft-mtp is still read from the file,
+#                      never from here: being wrong there produces an engine
+#                      that will not start.
 #   expected_tok_s     decode rate on this card, ON THE VULKAN ENGINE AND WITH
 #                      WHATEVER SPECULATION SHIPS BY DEFAULT -- see
 #                      config.REFERENCE_BACKEND. verified: true means measured
@@ -53,6 +66,8 @@ models:
     params: 27B dense (64 layers, 16 full-attention + 48 linear)
     kv_kib_per_token: 64
     max_ctx: 262144
+    mtp: true
+    full_attention_layers: 16
     expected_tok_s: 55
     chat_template: qwen3.8-27b.jinja
     verified: true
@@ -101,6 +116,8 @@ models:
     params: 35B total, 3B active (256 experts, 8 per token) + an MTP head
     kv_kib_per_token: 20
     max_ctx: 262144
+    mtp: true
+    full_attention_layers: 10
     expected_tok_s: 172
     verified: true
     tags: [general, agentic, long-context, recommended]

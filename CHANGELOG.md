@@ -12,6 +12,31 @@ change is only visible in the source it does not need a line here.
 
 ### Fixed
 
+- **The planner now knows which backend it is planning for.** `catalog.fit`
+  priced a token of KV cache with one constant that was covering four unrelated
+  things, so it gave both backends the same window — and on CUDA that window
+  was *exactly* the measured ceiling. The plan loaded with 674 MiB free, which
+  is to say the entire safety margin the planner believed it had was gone, on a
+  machine whose desktop session was observed moving 100 MiB in an afternoon.
+
+  The constant is now the terms it was hiding: the real `q8_0` ratio (34 bytes
+  per 32 values, not half of f16), multi-token prediction's own cache, a
+  per-backend multiplier and fixed overhead, and what is left for the
+  allocator. CUDA is priced ~14% more per token plus a flat 230 MiB, which is
+  the difference the measurements show.
+
+  **Almost nothing moves.** The old 1.12 was measured *through* the `q8_0`
+  arithmetic error, so it is re-attributed rather than corrected on top —
+  otherwise every model would be priced 6% above what it was observed to cost.
+  Every entry with no MTP head is therefore priced exactly as before, and the
+  only one whose window changes is Qwen3.8-27B, from 168k to 156k on Vulkan and
+  132k on CUDA. It was the model paying nothing for a cache it had.
+
+  What this does not do is fit the hybrid MoE's curve: resident VRAM is not
+  linear in context on one — Qwen3.6-35B-A3B-MTP reads 8.99, 11.57 and 16.78
+  KiB/token by segment where the dense 27B is linear to within 0.5% — so the
+  budget stays conservative rather than tuned to a measured slope.
+
 - **Multi-token prediction's own KV cache was never quantised**, so on every
   model that carries the head it ran at `f16` beside a main cache at `q8_0`.
   The draft model has separate flags — `--spec-draft-type-k` and

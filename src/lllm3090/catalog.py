@@ -42,6 +42,24 @@ class Model:
     #: The model's own RoPE ceiling. Context beyond this is incoherent, not
     #: merely expensive, so it caps every calculation here.
     max_ctx: int
+    #: Whether the checkpoint carries a multi-token prediction head.
+    #:
+    #: Declared here because ``fit`` has to price a model *before* it is
+    #: downloaded, and the head costs a second KV cache. What actually launches
+    #: with ``--spec-type draft-mtp`` is still decided by reading the file --
+    #: see :func:`lllm3090.gguf.has_mtp` -- because being wrong there produces
+    #: an engine that will not start, where being wrong here produces a window
+    #: off by a few percent. Different costs, so different sources.
+    mtp: bool = False
+    #: How many of the model's layers keep a KV cache.
+    #:
+    #: Only needed where ``mtp`` is set, because the head is one more of these
+    #: and that is how its cost is priced. Derived from the GGUF header rather
+    #: than counted by hand: ``(block_count - 1) / full_attention_interval``,
+    #: where the ``- 1`` is the head itself. See
+    #: :func:`lllm3090.gguf.full_attention_layers`, and the test that checks
+    #: every entry here against the real checkpoint.
+    full_attention_layers: int | None = None
     expected_tok_s: int | None = None
     #: Optional replacement chat template shipped in ``lllm3090.data``. Used
     #: where a model's own template rejects something a client legitimately
@@ -142,18 +160,62 @@ class Plan:
         )
 
 
+def kv_cost(model: Model, backend: str = config.REFERENCE_BACKEND) -> float:
+    """What one token of KV cache really costs this model, in KiB.
+
+    Four terms, and the point of separating them is that they move
+    independently -- a single constant covering all four was wrong in a
+    different direction for every combination of backend and speculation:
+
+    1. **The tensors**, at the cache's real precision. ``kv_kib_per_token`` is
+       the f16 figure and ``q8_0`` is 0.53125 of it, not half: 34 bytes per 32
+       values. Every call site used to halve it, under-counting by 6%.
+    2. **Multi-token prediction's own cache**, where the checkpoint has the
+       head. It is one more full-attention layer, and it is not free -- it was
+       the whole of the difference between this model's nominal and resident
+       cost. See ``config.MTP_LAYER_OVERHEAD``.
+    3. **The backend.** CUDA costs 1.100-1.136x per token of the same cache.
+    4. **The allocator**, which is what is left once the other three are named.
+
+    Deliberately not a fifth, per-model term. Resident VRAM is not linear in
+    context on a hybrid MoE, so a measured per-token figure for one is an
+    average over a curve rather than a property of the model -- see
+    ``config.ALLOCATOR_OVERHEAD``. Everything above is arithmetic or a ratio.
+    """
+    per_token = model.kv_kib_per_token * config.Q8_0_RATIO
+    if model.mtp and model.full_attention_layers:
+        one_layer = model.kv_kib_per_token / model.full_attention_layers
+        per_token += (
+            one_layer * config.Q8_0_RATIO * config.MTP_LAYER_OVERHEAD
+        )
+    per_token *= config.ALLOCATOR_OVERHEAD
+    return per_token * config.BACKEND_KV_FACTOR.get(backend, 1.0)
+
+
 def fit(
-    model: Model, desktop: bool = True, profile: hardware.Profile | None = None
+    model: Model,
+    desktop: bool = True,
+    profile: hardware.Profile | None = None,
+    backend: str | None = None,
 ) -> Fit:
     """Compute the context a model leaves room for on the target card.
 
     The KV cache is what actually decides context, and it is compressible: the
-    engine is run with ``q8_0`` key and value caches, which halve the per-token
-    cost and are close to lossless. ``q4_0`` would halve it again but degrades
-    long-context reasoning, so it is deliberately not offered here.
+    engine is run with ``q8_0`` key and value caches, which cost about half per
+    token for close to no quality loss. ``q4_0`` would halve it again but
+    degrades long-context reasoning, so it is deliberately not offered here.
+
+    ``backend`` is which engine would serve. It is not cosmetic: CUDA costs
+    ~10% more per token of the same cache and holds ~230 MiB more before any
+    of it is allocated, so a planner blind to it promises a window the card
+    cannot hold -- which reads to a user as the model crashing, not as the plan
+    being too big.
     """
     profile = profile or hardware.detect()
+    backend = backend if backend is not None else engines.backend()
     budget = profile.usable_vram_mib(desktop)
+    # Flat, so it comes off the budget rather than multiplying into the slope.
+    budget -= config.BACKEND_FIXED_MIB.get(backend, 0)
     if model.vision:
         # The vision tower's compute buffers are not the projector's file size.
         budget -= config.VISION_WORKSPACE_RESERVE_MIB
@@ -165,16 +227,16 @@ def fit(
         # Total tokens VRAM can hold, rounded down to whole 1024-token pages.
         # Deliberately NOT clamped to the RoPE ceiling: that bounds one
         # conversation, while this is the pool they all share. plan() applies it.
-        # The nominal per-token figure is the tensor arithmetic; what the engine
-        # actually holds resident is larger, so it is what gets divided into the
-        # budget. See config.KV_OVERHEAD_FACTOR.
-        tokens = spare * 1024 / (kib_per_token * config.KV_OVERHEAD_FACTOR)
+        tokens = spare * 1024 / kib_per_token
         return int(math.floor(tokens / 1024) * 1024)
 
+    q8 = kv_cost(model, backend)
     return Fit(
         fits=True,
-        pool_f16=ctx_for(model.kv_kib_per_token),
-        pool_q8=ctx_for(model.kv_kib_per_token / 2),
+        # The f16 pool is reported rather than served -- nothing starts an
+        # engine with an f16 cache -- so it is the q8 cost scaled back up.
+        pool_f16=ctx_for(q8 / config.Q8_0_RATIO),
+        pool_q8=ctx_for(q8),
         spare_mib=int(spare),
     )
 
@@ -184,6 +246,7 @@ def plan(
     parallel: int | None = None,
     desktop: bool = True,
     profile: hardware.Profile | None = None,
+    backend: str | None = None,
 ) -> Plan:
     """Decide the pool size and per-conversation window for a model.
 
@@ -198,7 +261,7 @@ def plan(
     model cannot use -- which is what leaves room for an agent's subagents.
     """
     requested = parallel
-    f = fit(model, desktop, profile)
+    f = fit(model, desktop, profile, backend)
     if not f.fits:
         return Plan(0, requested or config.DEFAULT_PARALLEL, 0, "vram")
 
@@ -311,9 +374,14 @@ def min_vram_mib(
     # The smallest window that clears the floor, page-aligned the way plan()
     # hands one out, and never more than the architecture can address.
     window = min(model.max_ctx, _pages_up(config.AGENT_PROMPT_FLOOR + 1))
-    # Inverting fit(): a pool of this many tokens costs this much cache at q8,
-    # with the engine's own per-cell overhead restored on top.
-    per_token_kib = (model.kv_kib_per_token / 2) * config.KV_OVERHEAD_FACTOR
+    # Inverting fit(): a pool of this many tokens costs this much cache, with
+    # everything the engine holds on top of the tensors restored.
+    #
+    # Priced on the reference backend deliberately. This answers "what card
+    # would I need", which is hardware advice and has to be stable -- naming a
+    # different card because the reader happens to have compiled a CUDA engine
+    # would make the catalogue's shopping advice depend on their install.
+    per_token_kib = kv_cost(model)
     need = model.weights_mib + window * parallel * per_token_kib / 1024
     need += config.DRIVER_RESERVE_MIB + config.WORKSPACE_RESERVE_MIB
     if model.vision:
@@ -424,17 +492,19 @@ def installed(models_dir: Path | None = None) -> list[dict[str, Any]]:
     return out
 
 
-def vram_needed_mib(model: Model, ctx: int) -> float:
+def vram_needed_mib(
+    model: Model, ctx: int, backend: str | None = None
+) -> float:
     """Roughly what a pool of ``ctx`` tokens costs, weights and projector included.
 
-    The q8 cache halves the per-token figure, which is stored at f16, and
-    ``config.KV_OVERHEAD_FACTOR`` restores what the engine holds on top of it.
+    Priced on the engine that would actually serve, because this is compared
+    against free VRAM on this machine rather than used to give advice.
     """
-    per_token = (model.kv_kib_per_token / 2) * config.KV_OVERHEAD_FACTOR
-    return model.weights_mib + ctx * per_token / 1024
+    backend = backend if backend is not None else engines.backend()
+    return model.weights_mib + ctx * kv_cost(model, backend) / 1024
 
 
-def startup_vram_mib(model: Model, ctx: int) -> float:
+def startup_vram_mib(model: Model, ctx: int, backend: str | None = None) -> float:
     """What the card must have free for this plan to load *and keep serving*.
 
     ``vram_needed_mib`` is what the load itself allocates. The engine then needs
@@ -448,8 +518,10 @@ def startup_vram_mib(model: Model, ctx: int) -> float:
     The desktop reserve is deliberately *not* added: free VRAM is a measurement,
     and a compositor that is running has already taken its share out of it.
     """
-    needed = vram_needed_mib(model, ctx)
+    backend = backend if backend is not None else engines.backend()
+    needed = vram_needed_mib(model, ctx, backend)
     needed += config.WORKSPACE_RESERVE_MIB
+    needed += config.BACKEND_FIXED_MIB.get(backend, 0)
     if model.vision:
         needed += config.VISION_WORKSPACE_RESERVE_MIB
     return needed
@@ -601,8 +673,8 @@ def catalog_for_panel(desktop: bool | None = None) -> list[dict[str, Any]]:
         desktop = hardware.graphical()
     rows = []
     for m in load_catalog():
-        f = fit(m, desktop, profile)
-        p = plan(m, desktop=desktop, profile=profile)
+        f = fit(m, desktop, profile, backend)
+        p = plan(m, desktop=desktop, profile=profile, backend=backend)
         state, why = status(m, p, f, profile)
         rows.append(
             {

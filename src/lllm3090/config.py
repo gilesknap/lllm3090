@@ -84,17 +84,88 @@ WORKSPACE_RESERVE_MIB = 1024
 #: ``hardware.detect`` substitutes the live figure when nvidia-smi reports one.
 DRIVER_RESERVE_MIB = 512
 
-#: What a token of KV cache really costs, against the nominal
-#: ``kv_kib_per_token``. The nominal figure is the tensor arithmetic; llama.cpp
-#: also carries per-cell bookkeeping and allocates the pool whole at load, so
-#: resident cost runs above it.
+# ---------------------------------------------------------------------------
+# What a token of KV cache really costs
+# ---------------------------------------------------------------------------
+# This used to be one constant, ``KV_OVERHEAD_FACTOR = 1.12``, calibrated on
+# Gemma-4-26B-A4B: a Vulkan engine running a model with no MTP head. It was
+# covering three unrelated things at once -- allocator overhead, the backend,
+# and multi-token prediction's extra cache -- and being wrong about a fourth,
+# because the caller divided the nominal f16 figure by two to get q8_0.
+#
+# Splitting it is not tidying. Two of those terms move independently now that a
+# machine can carry two backends and the engine can turn speculation on by
+# itself, so a single number is wrong in a different direction for each
+# combination.
+#
+# What is deliberately NOT attempted here: a per-model measured constant.
+# Resident VRAM is not linear in context on a hybrid MoE -- Qwen3.6-35B-A3B-MTP
+# reads 8.99, 11.57 and 16.78 KiB/token by segment where the dense 27B is
+# linear at ~35.0 to within 0.5% -- so a measured "KiB per token" for it is an
+# average over a curve and depends on which two points produced it. Every term
+# below is either arithmetic or a ratio in which the curvature divides out.
+
+#: Bytes per value of a ``q8_0`` cache, against ``f16``'s two.
 #:
-#: Measured on Gemma-4-26B-A4B at two pool sizes 344k tokens apart: solving the
-#: two peaks for a fixed cost plus a per-token cost gives 11.2 KiB/token against
-#: a nominal 10, and the implied fixed cost agreed between the two runs to
-#: within 1 MiB. Without this, a plan sized to the last byte of the nominal
-#: cache overruns the card by 12% of the pool.
-KV_OVERHEAD_FACTOR = 1.12
+#: ``q8_0`` is 34 bytes per block of 32 values -- 32 quantised bytes plus an
+#: f16 scale -- so it is 1.0625 bytes per value and **0.53125x** of f16, not
+#: half. Every call site divided ``kv_kib_per_token`` by two, which under-counts
+#: the cache by 6% on every model in the catalogue.
+Q8_0_RATIO = 34 / 32 / 2
+
+#: What the allocator holds on top of the tensor arithmetic.
+#:
+#: The nominal per-token figure is the tensors; llama.cpp also carries per-cell
+#: bookkeeping and allocates the pool whole at load. This is what is left after
+#: the backend and MTP are named separately, and the one term with no
+#: derivation behind it.
+#:
+#: **This is the old 1.12, restated rather than re-measured.** That figure came
+#: from Gemma-4-26B-A4B at two pool sizes 344k tokens apart: resident cost
+#: solved to 11.2 KiB/token, against a nominal that had been computed as half
+#: of f16. The measurement was right and the attribution was not -- the true
+#: q8_0 nominal is 10.625, so the allocator's share is 11.2/10.625, and the
+#: rest of what 1.12 appeared to be was the arithmetic error above.
+#:
+#: Which is why correcting ``Q8_0_RATIO`` must not simply make everything 6%
+#: more conservative: that would double-count an error the constant had already
+#: absorbed, and would price Gemma 6% above what it was measured at. Written
+#: this way, a model with no MTP head is priced *identically* to before, and
+#: the only entries that move are the ones that were never paying for their
+#: draft cache.
+ALLOCATOR_OVERHEAD = 1.12 / 2 / Q8_0_RATIO
+
+#: What each backend multiplies the per-token cost by, against Vulkan.
+#:
+#: The only term the measurements showed generalising. CUDA costs
+#: **1.100-1.136x** per token across two models and both speculation settings;
+#: because it is a ratio of two measurements taken the same way, the
+#: non-linearity above divides out of it. The top of the range is taken, since
+#: this multiplies a budget rather than reporting a result.
+BACKEND_KV_FACTOR = {"cuda": 1.136}
+
+#: VRAM a backend holds before any cache is allocated, beyond Vulkan's.
+#:
+#: CUDA reports 24125 MiB of device memory where Vulkan reports 24822 on the
+#: same card, and ~230 MiB of that difference shows up as a flat cost rather
+#: than as anything per-token. Flat, so it is taken off the budget rather than
+#: multiplied into the slope.
+BACKEND_FIXED_MIB = {"cuda": 230}
+
+#: What multi-token prediction's own cache costs, as a multiple of one
+#: full-attention layer.
+#:
+#: The MTP head **is** one more full-attention layer, which is why
+#: ``block_count`` in the GGUF header reads 65 for a 64-layer model. Predicting
+#: it as one layer gives 4.00 KiB/token for the dense 27B and 2.00 for the
+#: 35B-A3B against 4.80 and 2.46 measured at f16 -- a consistent x1.20 and
+#: x1.23, which this carries.
+#:
+#: The head's cache is quantised like any other now (see
+#: ``lllm3090.engine.CACHE_TYPE``), so the layer is priced at ``Q8_0_RATIO``
+#: rather than at f16. That is the whole of what quantising the draft cache
+#: bought: 2.45 KiB/token back on the dense 27B, about 412 MiB at a 168k window.
+MTP_LAYER_OVERHEAD = 1.25
 
 #: Extra VRAM held back when a multimodal projector is loaded, on top of the
 #: workspace reserve above. The vision tower needs its own compute buffers, and

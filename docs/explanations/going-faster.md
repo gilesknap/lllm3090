@@ -118,18 +118,22 @@ systemd unit's environment says, which is Vulkan.
 The planned window needs no adjustment, but it has no margin left. See
 [what CUDA costs in context](#what-cuda-costs-in-context).
 
-**The copy-heavy configuration is not reachable from this CLI.**
-`engine.start` hardcodes `--spec-type draft-mtp` and passes no draft width, with
-no escape hatch for extra flags, so the 115.1 tok/s row needs `llama-server` run
-by hand:
+**The copy-heavy configuration has a name.** The 115.1 tok/s row is
+`--spec-type draft-mtp,ngram-cache --spec-draft-n-max 7`, and asking for it is:
 
-```
---spec-type draft-mtp,ngram-cache --spec-draft-n-max 7
+```bash
+lllm3090 start Qwen3.8-27B --profile copy
 ```
 
 It is worth it only for sessions that are mostly reproducing their input —
 refactoring, renaming, reformatting. It costs about 14% on prose and code
 editing, so it is a per-session choice and not a better default.
+
+It is **refused on Vulkan**, with the numbers, because this is the clearest case
+on the page of a verdict that inverts: the same two additions are 0.84–0.90×
+against MTP alone there, and the width alone costs a further 22% on prose. A
+flag that did not know which backend it was on would be aimed squarely at the
+default install.
 
 :::{note}
 Every figure above was measured with short prompts. Decode slows as the cache
@@ -645,10 +649,12 @@ under the ceiling and on CUDA it sits *at* it, so the entire safety margin the
 planner believes it has is gone. The desktop's own VRAM use was observed moving
 about 100 MiB in an afternoon, and that is now the whole budget.
 
-The mechanism is `config.KV_OVERHEAD_FACTOR`, one constant of `1.12` calibrated
-on Gemma-4-26B-A4B — a Vulkan engine running a model with no MTP head. Resident
-KiB/token measured against each model's nominal q8 figure, two models, both
-backends, MTP on and off:
+The mechanism was `config.KV_OVERHEAD_FACTOR`, one constant of `1.12`
+calibrated on Gemma-4-26B-A4B — a Vulkan engine running a model with no MTP
+head. (It has since been split into its parts — see *What the planner does with
+all this*, below; what follows is why it had to be.) Resident KiB/token measured
+against each model's nominal q8 figure, two models, both backends, MTP on and
+off:
 
 | | nominal | Vulkan, no MTP | Vulkan, MTP | CUDA, no MTP | CUDA, MTP |
 |---|---|---|---|---|---|
@@ -750,6 +756,43 @@ quietly rewritten because it is the same mistake this page catalogues elsewhere:
 a quantity measured once, generalised before anything else was measured against
 it.
 :::
+
+#### What the planner does with all this
+
+`config.KV_OVERHEAD_FACTOR` is gone, replaced by the terms it was covering.
+`catalog.kv_cost` now prices a token as tensors → MTP's layer → backend →
+allocator, and `fit` takes the backend it is planning for:
+
+| term | value | where it comes from |
+|---|---|---|
+| `Q8_0_RATIO` | 0.53125 | arithmetic: 34 bytes per 32 values |
+| MTP's cache | one full-attention layer, ×1.25 | the header, and the ×1.20/×1.23 measured |
+| `BACKEND_KV_FACTOR["cuda"]` | 1.136 | the top of the measured 1.100–1.136 range |
+| `BACKEND_FIXED_MIB["cuda"]` | 230 | flat, so it comes off the budget |
+| `ALLOCATOR_OVERHEAD` | 1.12 ÷ 2 ÷ 0.53125 | the Gemma measurement, re-attributed |
+
+That last row is the one worth reading twice. **Correcting `Q8_0_RATIO` must
+not make everything 6% more conservative**, because 1.12 was measured *through*
+the same error — Gemma's resident 11.2 KiB/token was divided by a nominal of 10
+that should have been 10.625. The measurement was right and the attribution was
+not, so the fix is to re-attribute rather than to stack a correction on top. Do
+it the other way and Gemma gets priced 6% above what it was actually observed
+to cost.
+
+The consequence is a change with a very narrow blast radius: **every model with
+no MTP head is priced to the last decimal exactly as before**, and the only
+entries that move are the two that were never paying for their draft cache.
+Qwen3.8-27B goes from 168k to 156k on Vulkan; Qwen3.6-35B-A3B-MTP does not move
+because it is capped by RoPE rather than by VRAM. On CUDA the dense 27B plans
+132k instead of the 168k both backends used to be given — which is the whole
+point, since 168k *was* CUDA's measured ceiling.
+
+What this deliberately does **not** do is fit the hybrid MoE's curve. `fit`
+still divides a budget by a per-token constant, which is the right equation for
+a linear model and the wrong one for a model whose marginal cost nearly
+doubles across its range. Every term above is arithmetic or a ratio in which
+the curvature divides out; none of them is a per-model measured slope, because
+that is the thing this page has now retracted twice.
 
 ### The draft cache is not quantised, and quantising it is free
 

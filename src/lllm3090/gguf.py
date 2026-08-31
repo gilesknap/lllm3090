@@ -144,6 +144,47 @@ def header(path: Path | str) -> tuple[dict[str, Any], list[str]]:
     return meta, names
 
 
+def full_attention_layers(path: Path | str) -> int | None:
+    """How many of this checkpoint's layers keep a KV cache, or None.
+
+    The catalogue's ``kv_kib_per_token`` is
+    ``kv_heads x (key_length + value_length) x 2 bytes x`` this number, and on
+    the hybrid models that carry an MTP head it reproduces the hand-entered
+    figures exactly. So this is what lets a declared field be *checked* rather
+    than trusted.
+
+    Two things make it less obvious than counting blocks:
+
+    * ``full_attention_interval`` -- these are hybrids, and only one layer in
+      four keeps a cache. The rest are SSM, whose state is per-sequence rather
+      than per-token and therefore costs nothing as context grows.
+    * ``block_count`` **includes the MTP head**, which is why it reads 65 for a
+      64-layer model and 41 for a 40-layer one. Subtracting it is the whole
+      reason the head can be priced as "one more of these".
+
+    ``None`` for an architecture that is not shaped this way -- Gemma-4 with
+    its sliding-window pattern and per-layer head counts, gpt-oss with no
+    interval at all. That is not a failure: none of them carries an MTP head,
+    so nothing needs the number.
+    """
+    try:
+        meta, _ = header(path)
+    except (OSError, Malformed, struct.error, ValueError, MemoryError):
+        return None
+    blocks = next(
+        (v for k, v in meta.items() if k.endswith(".block_count")), None
+    )
+    interval = next(
+        (v for k, v in meta.items() if k.endswith(".full_attention_interval")),
+        None,
+    )
+    if not isinstance(blocks, int) or not isinstance(interval, int):
+        return None
+    if interval <= 0 or blocks <= 1:
+        return None
+    return (blocks - 1) // interval
+
+
 def has_mtp(path: Path | str) -> bool:
     """Whether this checkpoint carries a usable multi-token prediction head.
 
