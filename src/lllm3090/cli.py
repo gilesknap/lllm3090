@@ -338,8 +338,21 @@ def start(
         None, min=1,
         help="Conversations sharing the pool. Default: 2, for subagents.",
     ),
+    effort: str = typer.Option(
+        None,
+        help="Reasoning level for the whole session: "
+             + ", ".join(engine.REASONING_EFFORTS) + ". Default: the model's.",
+    ),
 ) -> None:
     """Start the engine on an installed model."""
+    # Checked before the stop, deliberately: a typo is a typo, and taking a
+    # working engine down to report one costs a reload of the weights.
+    if effort is not None and effort not in engine.REASONING_EFFORTS:
+        typer.echo(
+            f"unknown effort {effort!r}; one of: "
+            f"{', '.join(engine.REASONING_EFFORTS)}"
+        )
+        raise typer.Exit(1)
     entry = next((m for m in catalog.installed() if m["name"] == model), None)
     if entry is None:
         typer.echo(f"{model!r} is not installed. Try: lllm3090 models")
@@ -360,7 +373,8 @@ def start(
         typer.echo(warning)
     template = known.chat_template if known else None
     ok, detail = engine.start(
-        entry["path"], model, ctx, parallel, 300, template, entry.get("mmproj")
+        entry["path"], model, ctx, parallel, 300, template,
+        entry.get("mmproj"), effort,
     )
     typer.echo(detail)
     raise typer.Exit(0 if ok else 1)

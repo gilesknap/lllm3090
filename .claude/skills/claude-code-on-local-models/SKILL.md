@@ -130,6 +130,39 @@ the first fails, and the Jinja traceback names neither the client nor the cause.
 Grep a new model's template for `raise_exception` before assuming the model is
 at fault; serving it with a patched template is a one-line change.
 
+## `/effort` inside the session reaches nothing
+
+Claude Code sends the level as `output_config.effort` in the `/v1/messages`
+body. llama.cpp does not implement that field and does not reject it — verified
+on the box: `{"output_config":{"effort":"low"}}` returns **200**, byte for byte
+like a request carrying an invented field. The client only latches
+"unsupported" on a 400, so it keeps sending it and keeps displaying a level
+that never left the process. `CLAUDE_CODE_EFFORT_LEVEL` changes only what goes
+into that same ignored field.
+
+The engine's own name for the knob is `reasoning_effort`, and it is honoured
+**only on `/v1/chat/completions`** — a bogus value there is a 500 out of the
+template, which is how you can tell it arrived. On `/v1/messages` a bogus value
+is ignored, so injecting the field with a proxy does not work either.
+
+What does work is the launch argument: `llama-server --reasoning-effort LEVEL`,
+exposed as `lllm3090 start <model> --effort <level>`. Server-wide, for the life
+of the process, shared by every session and subagent on it.
+
+Two traps behind it:
+
+- **The template default is not "off".** `Qwen3.8-27B` resolves to `xhigh` when
+  nothing is passed and injects "think carefully… validate key assumptions…
+  consider plausible alternatives" into the system turn. Every agent turn is at
+  the longest setting until you say otherwise — and here the window, not the
+  clock, is what runs out.
+- **A level the template does not implement kills every request, not the
+  start.** `minimal` and `max` are on llama.cpp's list and absent from that
+  model's template, which implements `low`, `medium` and `xhigh` (folding
+  `high` into `xhigh`) and raises on the rest. The engine still loads and still
+  answers `/health`. `POST /apply-template` with the level renders a prompt and
+  generates nothing, which makes it a one-round-trip check for exactly this.
+
 ## Context is the constraint, not tokens per second
 
 Measured on ws03, same repo, same prompt, local 35B-A3B against a hosted

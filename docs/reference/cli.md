@@ -11,7 +11,7 @@ lllm3090 <command> [options]
 | `install-engine` | Fetch and checksum-verify the pinned llama.cpp build |
 | `fetch-engine [--build TAG]` | Fetch a build to measure against, beside the install rather than over it |
 | `models` | The catalogue: size, kind, achievable context, state, expected speed |
-| `start <name> [--ctx N] [--parallel N]` | Stop any running engine and start this model |
+| `start <name> [--ctx N] [--parallel N] [--effort LEVEL]` | Stop any running engine and start this model |
 | `stop` | Terminate the engine and wait for the VRAM to be released |
 | `bench <name>` | Benchmark a model and print a profile block to contribute |
 | `sweep [--gpu ID] [--limit N] [--yaml] [--skipped]` | Survey published GGUF models and price them against a card |
@@ -34,6 +34,16 @@ detected card. It never produces a speed — `bench` is what does that.
 as much as it can up to the model's RoPE ceiling. `--ctx` overrides the whole
 pool; an unknown GGUF gets a conservative 32768 per slot. Anything after `claude` is passed
 through to Claude Code unchanged.
+
+`--effort` sets how long the model thinks, for the life of the engine:
+`minimal`, `low`, `medium`, `high`, `xhigh` or `max`, handed to the chat
+template as llama.cpp's `--reasoning-effort`. Omit it and the model's own
+default applies — `xhigh` on `Qwen3.8-27B`. It is a launch argument because
+there is nowhere else to put it: a harness cannot set it per request, and
+Claude Code's `/effort` does not reach the engine at all
+(see [](../how-to/claude-code.md)). A level the model's template does not
+implement fails the start rather than producing an engine that 500s on every
+request.
 
 `claude --print-env` writes the environment as `export` lines and nothing else
 to stdout, so `eval "$(lllm3090 claude --print-env)"` sets up a shell for a

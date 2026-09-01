@@ -12,6 +12,25 @@ change is only visible in the source it does not need a line here.
 
 ### Added
 
+- **`lllm3090 start <model> --effort <level>`** sets how long the model thinks,
+  because the harness cannot. Claude Code's own `/effort` sends
+  `output_config.effort`, a field llama.cpp neither implements nor rejects — the
+  request returns 200 and the level is dropped in silence, so the session goes
+  on displaying an effort that never left the client. The engine's
+  `--reasoning-effort` is the one route that reaches the chat template, and it
+  is a launch argument, so this is where it belongs.
+
+  It matters most where nothing looked wrong: `Qwen3.8-27B`'s template defaults
+  to `xhigh` and tells the model to "think carefully, validate key assumptions,
+  consider plausible alternatives" on every turn. On a card where the context
+  window runs out long before the clock does, that default is expensive and
+  invisible.
+
+  A level the model's template does not implement — `minimal` on that same
+  model — raises while rendering, which is a 500 on every request from an
+  engine that loads normally and answers `/health`. `start` renders one prompt
+  before it reports ready, and refuses rather than leaving that engine up.
+
 - **An explanation of what actually makes a local model fast**
   (`docs/explanations/what-makes-it-fast.md`), written for someone who has not
   met the vocabulary: the two clocks, why guessing ahead works and why it never
