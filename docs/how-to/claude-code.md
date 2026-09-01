@@ -75,6 +75,56 @@ The honest version: it works, and it is not the same experience.
   for two call sites. The shape of its claims was right; the magnitudes were
   asserted rather than counted.
 
+## `/effort` does not reach the model — `start --effort` does
+
+Claude Code's `/effort` command is accepted inside the session and changes
+nothing about what the local model does. It travels as `output_config.effort`
+in the `/v1/messages` body, and llama.cpp does not implement that field.
+Unknown fields are dropped rather than refused: a request carrying
+`output_config.effort` returns 200, exactly as one carrying an invented field
+does. Because there is no 400, Claude Code never learns the level went nowhere
+— it only latches "unsupported" on a rejection — so the TUI goes on reporting
+an effort that never left the client. `CLAUDE_CODE_EFFORT_LEVEL` is the same
+dead end; it only changes what goes into that ignored field.
+
+The knob does exist, under another name. llama.cpp takes `reasoning_effort` and
+hands it to the chat template — but only on `/v1/chat/completions`. On
+`/v1/messages`, the endpoint Claude Code uses, even that is ignored, so a proxy
+that injects the field into the Anthropic body will not help either. What is
+left is the engine's own launch argument:
+
+```bash
+lllm3090 start Qwen3.8-27B --effort low
+lllm3090 claude
+```
+
+That is `--reasoning-effort` on `llama-server`: one level for the life of the
+process, shared by every session and every subagent on it. Levels are
+`minimal`, `low`, `medium`, `high`, `xhigh` and `max`; omit the option and the
+template's own default stands.
+
+Two things worth knowing before you pick one:
+
+- **The default is not neutral.** `Qwen3.8-27B`'s template resolves to `xhigh`
+  when nothing is passed and injects "think carefully through the task,
+  validate key assumptions, consider plausible alternatives" into the system
+  turn. Every Claude Code turn against it is thinking at the longest setting
+  unless you say otherwise. Where the window, not the clock, is what runs out
+  first — see [](context-and-slots.md) — shorter thinking buys more than faster
+  thinking would.
+- **Not every model implements every level.** The level is passed through to
+  the template, and a template is free to raise on one it does not know:
+  `Qwen3.8-27B` implements `low`, `medium` and `xhigh`, folds `high` into
+  `xhigh`, and raises on the rest. That failure is a 500 on every request from
+  an engine that loads normally and answers `/health` — so `start` renders one
+  prompt before reporting ready, and refuses the start rather than leaving that
+  engine up.
+
+On `gpt-oss-20B`, where the same control was measured, it changes output
+*length* and not speed: 215 tokens at `minimal` against 396 at `high`, both at
+about 145 tok/s. For agent work that is the useful direction — it shortens the
+pause before the tool call.
+
 ## A patched chat template — only for `Qwen3.8-27B`
 
 This section applies to the dense option, not to `Qwen3.6-35B-A3B`, which needs

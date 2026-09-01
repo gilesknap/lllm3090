@@ -276,3 +276,51 @@ def test_the_engine_log_is_opened_for_append(installed_engine, state_dir, monkey
     engine.start(str(model), "M", 4096, 1, 0)
     assert flags[0] & os.O_APPEND
     assert config.ENGINE_LOG.read_text() == "", "each run starts with its own log"
+
+
+def test_a_rendering_error_is_reported_as_the_template_line(monkeypatch):
+    """llama.cpp returns the whole Jinja traceback -- source line, caret and
+    all. Only its last line was written for a person to read."""
+    import io
+    import urllib.error
+
+    body = (
+        b'{"error":{"code":500,"message":"\\n------------\\nWhile executing '
+        b'CallExpression at line 64, column 28 in source:\\n...\\n'
+        b'Error: Jinja Exception: Unexpected reasoning effort minimal. '
+        b'Supported types are xhigh (default), medium, and low."}}'
+    )
+
+    def boom(req, timeout=None):
+        raise urllib.error.HTTPError(
+            "u", 500, "Server Error", {}, io.BytesIO(body)
+        )
+
+    monkeypatch.setattr(engine.urllib.request, "urlopen", boom)
+    complaint = engine.template_refuses_effort("minimal")
+    assert complaint == (
+        "Error: Jinja Exception: Unexpected reasoning effort minimal. "
+        "Supported types are xhigh (default), medium, and low."
+    )
+
+
+def test_a_template_that_renders_the_level_complains_about_nothing(monkeypatch):
+    class Rendered:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(
+        engine.urllib.request, "urlopen", lambda req, timeout=None: Rendered()
+    )
+    assert engine.template_refuses_effort("low") is None
+
+
+def test_an_engine_that_cannot_be_asked_is_not_accused(monkeypatch):
+    """A build with no /apply-template, or a connection that fails, is a check
+    that did not happen -- not a level that was refused. Treating the two the
+    same would fail starts that were fine."""
+    monkeypatch.setattr(config, "ENGINE_URL", "http://127.0.0.1:1")
+    assert engine.template_refuses_effort("low") is None
