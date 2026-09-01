@@ -84,8 +84,15 @@ repeat a chunk of the input — you asked it to rewrite a file with one name
 changed — then the guesses can just be copied out of your prompt. No model
 needed. This sounds free and it is very cheap, but the guesses are only good when
 the output really is repetitive; the rest of the time they are wrong and the
-checking is wasted. Measured here it was a *slowdown* on every workload tried,
-including the copy-heavy one it was designed for.
+checking is wasted.
+
+This one turns out to depend entirely on the backend, which is the clearest
+illustration on this page of why that matters. On the Vulkan engine that ships
+here it is a *slowdown on every workload tried*, including the copy-heavy one it
+was designed for. On CUDA, with everything else identical, it is **1.4× on
+copying** — and stacked with the MTP head it becomes the fastest configuration
+measured on this hardware. Same guesses, same proportion accepted; the
+difference is only what the card charges to check them.
 
 ### How many to guess: draft width
 
@@ -99,7 +106,10 @@ ahead it reaches.
 
 The number of words guessed per round is the *draft width*, and it turns out to
 matter a great deal — on this hardware, more than which guesser you use. It also
-turns out to depend on the **backend**, which is the next idea.
+turns out to depend on the **backend**, which is the next idea: guessing seven
+ahead costs 22% of your speed on Vulkan and 8% on CUDA, with *the same
+proportion of guesses thrown away* on both. The wasted guessing is the guesser's
+fault; the price of it is the backend's.
 
 ## How the GPU is driven: backends
 
@@ -114,9 +124,9 @@ understands. llama.cpp has several, and two matter here:
   llama.cpp publishes ready-built Vulkan binaries, so it installs by downloading
   a file. This project uses it for exactly that reason.
 
-Measured here, CUDA is about 1.3× faster on both clocks. Worth knowing, but not
-the transformation it is sometimes described as — this page's companion used to
-claim 3–4× on prefill, and that was wrong.
+Measured here with no guessing turned on, CUDA is about 1.3× faster on both
+clocks. Worth knowing, but not the transformation it is sometimes described as —
+this page's companion used to claim 3–4× on prefill, and that was wrong.
 
 The interesting difference is subtler. **Vulkan gets no faster when you give it
 more work to do at once.** Asked to read 512 words it manages ~1027 a second;
@@ -125,8 +135,20 @@ same change.
 
 That single fact explains the draft-width result. Checking guesses is exactly
 "more work at once" — so on a backend that gets nothing from batching, wider
-guessing is close to pure cost. It is why every guessing verdict measured here
-deserves re-testing on CUDA before it is believed.
+guessing is close to pure cost.
+
+**Which means the 1.3× understates it, and by a lot.** Every guessing verdict
+here was re-measured on CUDA to test that reasoning, and it held: guessing is
+worth much more on a backend that batches well. The MTP head is worth 1.6× on
+Vulkan and **2.0× on CUDA** — with the same guesses accepted at the same rate,
+so the only thing that changed is the price of checking. Since the engine always
+has guessing switched on, what a user would actually feel from CUDA is about
+**1.6×**, not 1.3×; on copy-heavy work, where the extra levers pay too, close to
+2×.
+
+The general lesson is worth more than the specific numbers: a backend comparison
+run with the features switched off can be badly wrong about the machine you
+actually use, because the features and the backend multiply rather than add.
 
 ## Making the conversation fit: the KV cache
 
@@ -184,13 +206,15 @@ here:
 1. **A model that reads less per word** — a sparse model, or a smaller one.
    Nothing else comes close.
 2. **Speculative decoding with a good guesser**, which for these models means the
-   free MTP head. Worth about 1.6×.
-3. **The right draft width**, which is worth more than picking a different
-   guesser, and depends on your backend.
-4. **A quantised KV cache**, which does not make it faster but makes long
+   free MTP head. Worth about 1.6× on the engine that ships, 2.0× on CUDA.
+3. **CUDA over Vulkan**, worth about 1.6× *once guessing is on* — for a toolkit,
+   a compiler, and a binary that only runs on the card it was built for. It
+   moved up this list when it was measured against the real configuration
+   instead of a bare one.
+4. **The right draft width**, which is worth more than picking a different
+   guesser, and depends on your backend and your workload both.
+5. **A quantised KV cache**, which does not make it faster but makes long
    conversations possible at all.
-5. **CUDA over Vulkan**, worth about 1.3× — for a toolkit, a compiler, and a
-   binary that only runs on the card it was built for.
 
 And one thing that is not on the list, because no lever touches it: the first
 reply to a very long prompt is slow, and stays slow. That is prefill, it is
