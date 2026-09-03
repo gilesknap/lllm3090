@@ -287,6 +287,23 @@ change is only visible in the source it does not need a line here.
   backend charges: CUDA takes it to a minute and a half, not to thirty seconds.
   Decode, meanwhile, is 1.28x rather than the ~10% the scoreboards suggest.
 
+### Removed
+
+- **`lllm3090 tui` is gone.** It existed for the machine that cannot reach the
+  panel in a browser — a console on Ctrl-Alt-F3, an SSH session without a
+  tunnel — and it drew a second copy of the panel to do it. That is a whole
+  front end's worth of layout, key handling and speed-qualifier wording kept in
+  step with the browser's by hand, and it had begun to decide what the panel
+  could say: a fact worth a badge in a browser has to fit an 80-column console
+  too, and the narrower surface was winning the argument.
+
+  Nothing that was only reachable through it is lost except a keyboard-driven
+  download. `lllm3090 models`, `start`, `status` and `stop` answer from any
+  console, and a download is a `POST /api/download/{id}` to the panel — see
+  `docs/reference/http.md` — or an SSH tunnel and the panel itself, which
+  `docs/how-to/remote-access.md` has always been the recommended way to reach a
+  headless box.
+
 ## [0.6.0] — 2026-08-28
 
 ### Added

@@ -428,8 +428,8 @@ UNKNOWN_MODEL_CTX = 32768
 def launch_plan(name: str, parallel: int | None = None) -> Plan:
     """How to start an installed model, whether or not the catalogue knows it.
 
-    Every front end -- the CLI, the panel and the terminal UI -- has to answer
-    the same question before it can launch anything, and they must answer it
+    Both front ends -- the CLI and the panel -- have to answer the same
+    question before they can launch anything, and they must answer it
     identically: a model started from the console and the same model started
     from the panel are the same engine on the same card.
     """
@@ -590,10 +590,9 @@ def status(
 ) -> tuple[str, str]:
     """This model's state on this card, and the phrase every front end shows.
 
-    The wording lives here rather than in the panel, the terminal UI and the
-    CLI separately, because all three answer the same question about the same
-    card and disagreeing about it is how a promise gets made in one place and
-    withdrawn in another.
+    The wording lives here rather than in the panel and the CLI separately,
+    because both answer the same question about the same card and disagreeing
+    about it is how a promise gets made in one place and withdrawn in another.
     """
     if not capability_ok(model, profile):
         return STATUS_CAPABILITY, (

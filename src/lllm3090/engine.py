@@ -47,10 +47,10 @@ TAIL_BYTES = 256 * 1024
 def tail(lines: int = 200) -> list[str]:
     """The last ``lines`` readable lines of the engine log.
 
-    This lives with the code that writes the log rather than with either front
-    end, because both read it: the panel streams it to a browser over SSE, and
-    the terminal UI -- which is on the same machine by construction, since the
-    panel binds loopback -- simply re-reads the end of the file.
+    This lives with the code that writes the log rather than with the panel,
+    because the log is the engine's rather than any front end's: the panel
+    streams it to a browser over SSE, and ``lllm3090 status`` and a shell on
+    the same box read the same file.
 
     Split on newlines alone, deliberately. Python's universal newlines turn a
     carriage return into a line ending, which silently makes a progress-bar

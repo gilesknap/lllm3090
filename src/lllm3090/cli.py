@@ -887,28 +887,6 @@ def panel(
     uvicorn.run("lllm3090.panel:app", host="127.0.0.1", port=port, log_level="warning")
 
 
-@app.command()
-def tui(
-    url: str = typer.Option(
-        None, help="Panel to drive. Default: the local one, if it is running."
-    ),
-) -> None:
-    """The control panel on a text console, for a machine with no browser.
-
-    Drives the panel over HTTP when it is running, and falls back to this
-    process for everything that has a local answer -- which is all of it except
-    downloading, since that is state the panel owns.
-    """
-    from .tui import run as run_tui
-
-    # Both streams: curses draws on stdout but reads the keyboard from stdin,
-    # so a piped stdin gets a screen nobody can drive.
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        typer.echo("lllm3090 tui needs a terminal. For a script, try: lllm3090 status")
-        raise typer.Exit(1)
-    raise typer.Exit(run_tui(url))
-
-
 def claude_env(model: str, window: int, slots: int | None = None) -> dict[str, str]:
     """The environment Claude Code is launched with, in one place.
 
