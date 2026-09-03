@@ -20,7 +20,7 @@ import urllib.request
 from importlib import resources
 from pathlib import Path
 
-from . import config, gguf
+from . import config, gguf, speculation
 
 #: Colour and cursor escapes llama.cpp writes when it thinks it has a terminal.
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -128,6 +128,75 @@ def supports(flag: str) -> bool:
     return _SUPPORTS[key]
 
 
+#: What every KV cache this engine allocates is quantised to.
+#:
+#: One constant for both caches, because there are two and the bug this fixes
+#: was that they disagreed. ``--cache-type-k/v`` sizes the main cache;
+#: ``--spec-draft-type-k/v`` sizes the draft model's, which llama.cpp defaults
+#: to ``f16`` and does *not* inherit from the main one. So for as long as only
+#: the first pair was passed, the model's own draft context was held at full
+#: precision beside a main cache at half -- and that gap was the whole of what
+#: multi-token prediction cost in memory.
+#:
+#: q8_0 halves the cost per token against f16 for close to no quality loss, and
+#: is what makes long context affordable on 24 GB. q4_0 would halve it again
+#: but degrades long-context reasoning, so it is deliberately not offered.
+CACHE_TYPE = "q8_0"
+
+
+def spec_flags(profile: speculation.Profile, model_path: str) -> list[str]:
+    """The speculation arguments for this profile against this checkpoint.
+
+    Two things can silently remove a flag here, and both have to be checked on
+    an install that works:
+
+    * **The binary.** The engine build is pinned but not upgraded in place --
+      ``install-engine`` skips replacement when a binary is already there --
+      so a binary older than ``--spec-type`` survives an ``lllm3090`` upgrade
+      and would exit on an argument it has never heard of.
+    * **The checkpoint.** Only the file on disk decides whether the MTP head is
+      there, and llama.cpp refuses to start with ``--spec-type draft-mtp``
+      against one that lacks it. See :mod:`lllm3090.gguf`.
+
+    Dropping ``draft-mtp`` from a checkpoint that has no head is right for the
+    default profile and wrong for a named one, which is why a named profile is
+    refused earlier, in :func:`start`, rather than quietly reshaped here.
+    """
+    if not supports("--spec-type"):
+        return []
+    types = tuple(
+        t for t in profile.spec_types
+        if t != "draft-mtp" or gguf.has_mtp(model_path)
+    )
+    if not types:
+        return []
+    flags = ["--spec-type", ",".join(types)]
+    if profile.draft_n_max is not None and supports("--spec-draft-n-max"):
+        flags += ["--spec-draft-n-max", str(profile.draft_n_max)]
+    # A drafter that is a *model* keeps its own KV cache, and it is not sized
+    # by --cache-type-k/v: llama.cpp defaults it to f16 whatever the main cache
+    # is set to. Quantising it gives back 2.45 of the 4.80 KiB/token that MTP
+    # costs on the dense 27B -- about 412 MiB at a 168k window -- and moves the
+    # ceiling from 200704 tokens to 208896.
+    #
+    # It cannot change what the model says. Every draft is verified by the full
+    # model whatever cache produced it, so a coarser draft can only be accepted
+    # less often, and measured either side it is not: 43.7 -> 44.1 tok/s at a
+    # short prompt and 32.3 -> 33.3 at 62k. (The acceptance figures moved too,
+    # by less than this instrument swings on content alone, so the right
+    # reading is "no penalty" rather than "faster".)
+    #
+    # Only for a draft model. The n-gram modes draft from the prompt and have
+    # no context to quantise, so passing this for them would set a flag that
+    # describes nothing.
+    if any(t.startswith("draft-") for t in types) and supports(
+        "--spec-draft-type-k"
+    ) and supports("--spec-draft-type-v"):
+        flags += [
+            "--spec-draft-type-k", CACHE_TYPE,
+            "--spec-draft-type-v", CACHE_TYPE,
+        ]
+    return flags
 #: Levels ``llama-server --reasoning-effort`` accepts, less ``default`` --
 #: which means "pass nothing", and is spelled here by leaving ``--effort`` off.
 #:
@@ -285,6 +354,7 @@ def start(
     wait: int = 300,
     chat_template: str | None = None,
     mmproj: str | None = None,
+    spec: speculation.Profile | None = None,
     effort: str | None = None,
 ) -> tuple[bool, str]:
     """Launch llama-server and block until it answers.
@@ -292,14 +362,22 @@ def start(
     ``wait`` is how many seconds to poll for readiness; 0 returns as soon as the
     process is launched.
 
+    ``spec`` is what the engine guesses ahead with; ``None`` is
+    :data:`lllm3090.speculation.DEFAULT`, which is what every start got before
+    there was a choice. Whether a profile is allowed on the installed backend
+    is settled by :func:`lllm3090.speculation.resolve` before we get here --
+    this only has to refuse the one thing that cannot be known until the
+    checkpoint is in hand.
+
     ``ctx`` is the whole KV pool and ``parallel`` is how many conversations
     share it, so each slot gets ``ctx // parallel`` tokens. What to pass is
     decided by :func:`lllm3090.catalog.plan`, which fills one conversation to
     the model's ceiling before opening a second; an agent that wants room for a
     subagent has to ask for it.
 
-    The cache is quantised to ``q8_0``, which halves its cost per token for
-    close to no quality loss and is what makes long context affordable on 24 GB.
+    Both caches are quantised to :data:`CACHE_TYPE` -- the main one and the
+    draft model's, which is a separate cache with a separate flag and does not
+    inherit the setting. See :func:`spec_flags`.
 
     ``effort`` is a reasoning level from :data:`REASONING_EFFORTS`, given to the
     chat template for the life of the process. It is the only way to reach a
@@ -334,6 +412,16 @@ def start(
         bad = not_a_gguf(Path(mmproj))
         if bad:
             return False, bad
+    spec = spec or speculation.DEFAULT
+    if spec.needs_mtp and not gguf.has_mtp(model_path):
+        # A named profile is a request, and this one is a measurement of a
+        # configuration that includes the MTP head. Serving the rest of it
+        # under the same name would be a different engine wearing the number.
+        return False, (
+            f"--profile {spec.name} needs a multi-token prediction head and "
+            f"{name} does not carry one. Its figures were measured with "
+            "draft-mtp in the mix; without it they describe nothing."
+        )
 
     config.STATE_DIR.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, LD_LIBRARY_PATH=str(config.LLAMA_DIR))
@@ -359,32 +447,16 @@ def start(
                 "--ctx-size", str(ctx),
                 "--parallel", str(parallel),
                 "-fa", "on",
-                "--cache-type-k", "q8_0",
-                "--cache-type-v", "q8_0",
+                "--cache-type-k", CACHE_TYPE,
+                "--cache-type-v", CACHE_TYPE,
                 "--jinja",
-                # Multi-token prediction, when the checkpoint carries the head.
-                #
-                # The model drafts its own next few tokens and verifies them in
-                # one pass, so accepted drafts cost a fraction of a forward
-                # pass. Measured on the reference 3090: Qwen3.8-27B 34.9 ->
-                # 56.6 tok/s (1.62x), Qwen3.6-35B-A3B-MTP 130.5 -> 171.8
-                # (1.32x), 179.9 on code editing.
-                #
-                # Read from the file rather than the catalogue on purpose: only
-                # the checkpoint on disk decides whether the head is there, and
-                # llama.cpp refuses to start with this flag against one that
-                # lacks it. See lllm3090.gguf.
-                #
-                # Both halves are checked, because both can be false on a
-                # working install: the engine build is pinned but not upgraded
-                # in place, so a binary older than --spec-type survives an
-                # lllm3090 upgrade and would exit on an argument it has never
-                # heard of.
-                *(
-                    ["--spec-type", "draft-mtp"]
-                    if supports("--spec-type") and gguf.has_mtp(model_path)
-                    else []
-                ),
+                # What the engine guesses ahead with. The default is the MTP
+                # head alone at llama.cpp's own draft width, which is what has
+                # always shipped; anything else is a measured profile the user
+                # asked for by name. Which settings win is a property of the
+                # backend rather than of the drafter -- see
+                # lllm3090.speculation for the numbers and why.
+                *spec_flags(spec, model_path),
                 # Vision: the projector is a separate GGUF that turns image
                 # input into embeddings the model can attend to.
                 *(["--mmproj", mmproj] if mmproj else []),

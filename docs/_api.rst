@@ -12,6 +12,8 @@ API reference
    lllm3090.catalog
    lllm3090.gguf
    lllm3090.sweep
+   lllm3090.engines
+   lllm3090.speculation
    lllm3090.engine
    lllm3090.downloads
    lllm3090.preflight

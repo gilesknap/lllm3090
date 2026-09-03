@@ -10,7 +10,145 @@ change is only visible in the source it does not need a line here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **An engine that could not be asked is no longer confused with a CPU one.**
+  `engines.backend()` answered `cpu` for three different situations — a real
+  CPU-only build, no engine installed yet, and a probe that failed — and
+  `speed_qualifier` waved `cpu` through as "no objection" so that
+  `lllm3090 models` would not caption every row on a fresh machine. A genuine
+  CPU build therefore had the catalogue's GPU speeds labelled `measured` on an
+  engine incapable of producing them. There is now a separate `unknown`, and it
+  alone carries that licence.
+
+  The sharper half is that a probe exiting non-zero was *cached*. A build whose
+  backend fails to initialise prints its error and exits 1, leaving an empty
+  device list that parsed as `cpu` — and in the long-lived panel process a CUDA
+  engine then stayed `cpu`, dropping its KV factor and fixed overhead, so the
+  plan promised a window the card could not hold. That is the failure this
+  module exists to prevent, reached from the other side. A failed probe is a
+  fact about the moment, exactly like the timeout the code already refused to
+  remember, and is now treated the same way.
+- **An optional CUDA build can no longer cost you the panel.** `setup` offers
+  to compile a CUDA engine at step 5 and installs the systemd unit at step 6.
+  `build_cuda` exits 1 on a build failure, and nothing caught it, so a compile
+  that died after twenty minutes took `setup` with it and the panel unit was
+  never written. Vulkan is installed and serving by that point either way; the
+  one optional step must not decide the outcome of the required ones.
+- **The planner now knows which backend it is planning for.** `catalog.fit`
+  priced a token of KV cache with one constant that was covering four unrelated
+  things, so it gave both backends the same window — and on CUDA that window
+  was *exactly* the measured ceiling. The plan loaded with 674 MiB free, which
+  is to say the entire safety margin the planner believed it had was gone, on a
+  machine whose desktop session was observed moving 100 MiB in an afternoon.
+
+  The constant is now the terms it was hiding: the real `q8_0` ratio (34 bytes
+  per 32 values, not half of f16), multi-token prediction's own cache, a
+  per-backend multiplier and fixed overhead, and what is left for the
+  allocator. CUDA is priced ~14% more per token plus a flat 230 MiB, which is
+  the difference the measurements show.
+
+  **Almost nothing moves.** The old 1.12 was measured *through* the `q8_0`
+  arithmetic error, so it is re-attributed rather than corrected on top —
+  otherwise every model would be priced 6% above what it was observed to cost.
+  Every entry with no MTP head is therefore priced exactly as before, and the
+  only one whose window changes is Qwen3.8-27B, from 168k to 156k on Vulkan and
+  132k on CUDA. It was the model paying nothing for a cache it had.
+
+  What this does not do is fit the hybrid MoE's curve: resident VRAM is not
+  linear in context on one — Qwen3.6-35B-A3B-MTP reads 8.99, 11.57 and 16.78
+  KiB/token by segment where the dense 27B is linear to within 0.5% — so the
+  budget stays conservative rather than tuned to a measured slope.
+
+- **Multi-token prediction's own KV cache was never quantised**, so on every
+  model that carries the head it ran at `f16` beside a main cache at `q8_0`.
+  The draft model has separate flags — `--spec-draft-type-k` and
+  `--spec-draft-type-v` — which do not inherit from `--cache-type-k/v`, and the
+  engine set only the second pair.
+
+  Setting both gives back **2.45 KiB/token of the 4.80 that MTP cost** on the
+  dense 27B — about **412 MiB at a 168k window** — and moves the ceiling from
+  200704 tokens to 208896. It costs nothing: 43.7 → 44.1 tok/s at a short
+  prompt and 32.3 → 33.3 at 62k. It cannot change what the model says either,
+  because every draft is verified by the full model whatever cache produced it,
+  so a coarser draft can only be accepted less often — and measured, it is not.
+
+  Both caches are now set from one constant, which is the actual fix: they have
+  to agree, and the bug was that they were written in two places and only one
+  of them was written.
+
+### Changed
+
+- **`going-faster.md` is a scoreboard again**, down from 1014 lines to 580 with
+  every measurement intact. It had grown a second copy of the explanations that
+  live in its companion `what-makes-it-fast.md`, and was restating the same
+  CUDA figures in four separate tables. The Vulkan and CUDA sweeps for each
+  lever are now single side-by-side tables, which is also the better shape for
+  a page whose main finding is that several verdicts differ by backend.
+- **Every surface that shows a speed now says what it is a speed of.** A speed
+  is a property of a configuration, and since a machine can now carry two
+  backends the card is no longer the whole of that: the same dense 27B serves
+  54.8 tok/s under Vulkan and 84.9 under CUDA — a wider spread than lies
+  between some catalogue entries. `lllm3090 models` captions the column, the
+  panel and the terminal UI say which backend a figure came from, and a figure
+  measured on another card or another backend is shown unchanged rather than
+  scaled, because a ratio is a guess printed in the same typeface as a
+  measurement.
+- **Qwen3.8-27B is quoted at 55 tok/s rather than 35.** The engine turns on its
+  multi-token prediction head by itself and has done since the head was
+  detected automatically, so 35 was the speed of a configuration that has not
+  shipped for some time. A catalogue figure below what the shipped
+  configuration delivers is not conservative — it is wrong about which
+  configuration it describes.
+
 ### Added
+
+- **`lllm3090 build-cuda`, and a `setup` that offers it.** llama.cpp publishes
+  CUDA archives for Windows only, so on Linux a CUDA engine is something the
+  machine compiles or does not have. It is worth compiling: on the dense 27B,
+  CUDA plus multi-token prediction measures **1.55–1.60×** the Vulkan engine
+  that installs by default, and **1.93×** on copy-heavy work with
+  `--profile copy`.
+
+  Nothing about the default install changes. Vulkan is still what arrives, as
+  one download verified against a digest recorded in the repository, and it
+  keeps serving after a CUDA build exists — point `LLLM3090_LLAMA_DIR` at the
+  build to use it. That is deliberate: a compiled binary reports `build 1,
+  commit <sha>` and nobody attests to it, which is a different promise from a
+  verified download, and it is the user's to make rather than `setup`'s.
+
+  `setup` states the costs before asking — the compile, the disk, and **about
+  14% of the context window**, since the dense 27B holds 196k tokens on Vulkan
+  and 168k on CUDA. It never builds unprompted, `--yes` included, and a re-run
+  finds the existing build rather than repeating it.
+
+  The toolkit is detected, never installed: that is 4–6 GB from a third-party
+  repository. It must be **CUDA 13.3 or newer** and specifically not Ubuntu
+  26.04's 13.1, which declares `rsqrt`/`rsqrtf` without an exception specifier
+  where glibc 2.43 declares them `noexcept(true)`, at which point `nvcc`
+  refuses every file that includes `<math.h>`. Both are commonly installed
+  side by side and `/usr/local/cuda` points at whichever was configured last,
+  so the newest usable one is chosen rather than whatever that symlink says.
+- **`lllm3090 doctor` now names the backend that would actually serve**, and
+  fails when a compiled CUDA engine is older than the pinned build. A CUDA
+  engine is tied to the commit it was compiled from and an upgrade does not
+  move it, so without this a CUDA user is silently left on an older engine than
+  every figure in the catalogue was measured against.
+
+- **`lllm3090 start <model> --profile copy`** asks the engine to guess ahead
+  more aggressively, for a session that is mostly reproducing its input. On
+  CUDA it takes the dense 27B's copy-heavy figure from 94.0 to 115.1 tok/s. It
+  costs about 14% on prose, so it is a session-shaped choice rather than a
+  better default.
+
+  It is **refused on Vulkan**, which is what installs today, and the refusal
+  carries the measurements: stacking prompt-lookup on the MTP head reads
+  0.84–0.90× against the head alone there, and widening the draft from 3 to 7
+  costs a further 22% on prose. The verdicts genuinely invert between backends
+  — the same n-gram drafting is 1.41× on CUDA copy-heavy work and 0.65× on
+  Vulkan prose — because verifying a draft is a batched forward pass and Vulkan
+  gets nothing from a wider batch. A "go faster" switch that did not know which
+  backend it was on would be a footgun aimed at the default install.
 
 - **`lllm3090 start <model> --effort <level>`** sets how long the model thinks,
   because the harness cannot. Claude Code's own `/effort` sends

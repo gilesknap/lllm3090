@@ -29,8 +29,9 @@ def console(monkeypatch):
     monkeypatch.setattr(engine, "stop", lambda: stopped.append(True))
     launched: dict = {}
 
-    def fake_start(*args):
+    def fake_start(*args, **kw):
         launched["args"] = args
+        launched["kw"] = kw
         return True, "engine ready"
 
     monkeypatch.setattr(engine, "start", fake_start)
@@ -41,7 +42,7 @@ def test_the_level_reaches_the_engine(console):
     stopped, launched = console
     result = runner.invoke(cli.app, ["start", MODEL, "--effort", "low"])
     assert result.exit_code == 0, result.output
-    assert launched["args"][-1] == "low"
+    assert launched["kw"]["effort"] == "low"
     assert stopped, "starting a model still replaces whatever was running"
 
 
@@ -49,7 +50,7 @@ def test_omitting_it_leaves_the_model_to_decide(console):
     _, launched = console
     result = runner.invoke(cli.app, ["start", MODEL])
     assert result.exit_code == 0, result.output
-    assert launched["args"][-1] is None
+    assert launched["kw"]["effort"] is None
 
 
 def test_a_typo_is_refused_before_the_running_engine_is_stopped(console):

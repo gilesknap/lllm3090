@@ -126,8 +126,11 @@ depth. Resident KiB/token as a multiple of each model's nominal q8 figure:
 | Qwen3.8-27B (nominal 32) | **1.094x** | 1.244x | 1.219x | 1.368x |
 | Qwen3.6-35B-A3B-MTP (10) | **1.216x** | 1.462x | 1.363x | **1.660x** |
 
-**`config.KV_OVERHEAD_FACTOR` is 1.12 and no single number can be right.** It
-was calibrated on Gemma-4-26B-A4B (Vulkan, no MTP head). Four lessons:
+**`config.KV_OVERHEAD_FACTOR` was 1.12 and no single number could be right.** It
+was calibrated on Gemma-4-26B-A4B (Vulkan, no MTP head), and has since been
+split into `Q8_0_RATIO`, `MTP_LAYER_OVERHEAD`, `BACKEND_KV_FACTOR`,
+`BACKEND_FIXED_MIB` and `ALLOCATOR_OVERHEAD`, with `catalog.kv_cost` combining
+them and `catalog.fit` taking a backend. Four lessons stand behind that:
 
 - **Resident VRAM is not linear in context on a hybrid MoE**, so "KiB per token"
   is not a well-defined quantity for one. Vulkan, no speculation, by segment:
@@ -146,14 +149,24 @@ was calibrated on Gemma-4-26B-A4B (Vulkan, no MTP head). Four lessons:
 - **Only the backend multiplier generalises**: 1.100-1.136x plus a fixed
   ~230 MiB. It is a ratio of identical measurements, so curvature divides out.
 
-`fit` also has two bugs unrelated to CUDA: `kv_kib_per_token / 2` assumes q8_0
-is half of f16 (it is 34/32 bytes per value, so 0.53125x -- a 6% under-count on
-every model), and its whole shape assumes linearity.
+`fit` also had two bugs unrelated to CUDA. The first is fixed: `kv_kib_per_token
+/ 2` assumed q8_0 was half of f16, where it is 34 bytes per 32 values (0.53125x).
+**Fixing it correctly meant re-attributing 1.12 rather than stacking a
+correction on it** -- that constant was measured *through* the same error, so
+keeping it would have priced Gemma 6% above what it was observed to cost. Done
+right, every model with no MTP head is priced exactly as before and only the two
+carrying a draft cache move.
 
-**MTP's draft cache is not quantised, and quantising it is free.**
-`--spec-draft-type-k` / `--spec-draft-type-v` set the *draft* cache's type and
-`engine.start` passes neither, so it runs at the default while the main cache is
-q8_0. Setting both to `q8_0` on the dense 27B, Vulkan:
+The second stands: `fit`'s whole shape assumes resident VRAM is linear in
+context, which is true of the dense 27B and false of the hybrid MoE above. No
+per-token constant fixes that, so the budget is kept conservative instead of
+tuned to a slope.
+
+**MTP's draft cache was not quantised, and quantising it was free.**
+`--spec-draft-type-k` / `--spec-draft-type-v` set the *draft* cache's type, and
+`engine.start` passed neither, so it ran at its f16 default while the main cache
+was q8_0. **It now passes both, from the same `engine.CACHE_TYPE` as the main
+cache**, so they cannot drift apart again. On the dense 27B, Vulkan:
 
 - **2.45 KiB/token back** (40.18 -> 37.73 resident), about half the MTP term and
   ~412 MiB at a 168k window
@@ -226,6 +239,14 @@ the fastest width-3 configuration measured on this box. Prose and code editing
 stay losses (0.93x, 0.92x). Acceptance is near-identical on both backends, so
 what changed is the price of checking drafts, not their quality. Do not carry a
 Vulkan speculation verdict onto CUDA, in either direction.
+
+**The CLI enforces that for you.** `lllm3090 start <model> --profile copy` is
+`--spec-type draft-mtp,ngram-cache --spec-draft-n-max 7`, and it is *refused on
+Vulkan* with the numbers. Profiles live in `lllm3090.speculation`, each
+recording the backends it was measured to win on; adding one means adding a
+measurement, not a flag. The default profile degrades to no speculation on a
+checkpoint with no head, where a named one refuses — a default adapts, a request
+is answered or refused.
 
 **On Vulkan: ngram is a regression, and stacking it with MTP is worse than MTP
 alone.**

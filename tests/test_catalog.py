@@ -448,14 +448,19 @@ def test_nothing_is_claimed_when_the_card_cannot_be_measured(monkeypatch):
 
 def test_vram_needed_counts_the_projector_and_the_q8_cache():
     m = next(x for x in catalog.load_catalog() if x.vision)
-    bare = catalog.vram_needed_mib(m, 0)
+    bare = catalog.vram_needed_mib(m, 0, backend="vulkan")
     assert bare == m.weights_mib, "no cache should cost only the weights"
-    # A q8 cache is half the f16 figure the catalogue stores, plus what the
-    # engine holds on top of the nominal tensor size.
-    grown = catalog.vram_needed_mib(m, 2048) - bare
-    nominal = 2048 * (m.kv_kib_per_token / 2) / 1024
-    assert grown == pytest.approx(nominal * config.KV_OVERHEAD_FACTOR)
+    # A q8 cache is 0.53125 of the f16 figure the catalogue stores -- 34 bytes
+    # per 32 values, not half -- plus what the engine holds on top of the
+    # nominal tensor size.
+    grown = catalog.vram_needed_mib(m, 2048, backend="vulkan") - bare
+    nominal = 2048 * (m.kv_kib_per_token * config.Q8_0_RATIO) / 1024
+    assert grown == pytest.approx(nominal * config.ALLOCATOR_OVERHEAD)
     assert grown > nominal, "the overhead factor must never flatter the cache"
+    assert grown > 2048 * (m.kv_kib_per_token / 2) / 1024, (
+        "and it must never come out under the half-of-f16 figure the whole "
+        "catalogue used to be priced at, which was itself an under-count"
+    )
 
 
 # --- hardware profiles ------------------------------------------------------
@@ -591,3 +596,232 @@ def test_more_slots_than_pages_is_refused_rather_than_overcommitted():
 
     with pytest.raises(ValueError, match="do not fit"):
         catalog.plan(heavy, seatable + 1, desktop=True, profile=card)
+
+
+# ---------------------------------------------------------------------------
+# What a speed is a speed of
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# What a token of KV cache costs
+# ---------------------------------------------------------------------------
+
+#: The reference card, with the driver reserve this machine actually reports.
+#: Every measured ceiling below was taken on it.
+REFERENCE = hardware.Profile(
+    id="rtx-3090", name="NVIDIA GeForce RTX 3090", compute_capability="8.6",
+    vram_mib=24576, bandwidth_gbs=936, measured=True, driver_reserve_mib=451,
+)
+
+#: The longest pool of the dense 27B each backend actually held, found by
+#: loading until the server died, desktop session running. The planner must sit
+#: under these -- at them it would have no margin at all, which is the state
+#: CUDA was in before any of this.
+CEILINGS = {"vulkan": 208896, "cuda": 172032}
+
+
+def _dense() -> catalog.Model:
+    return next(m for m in catalog.load_catalog() if m.name == "Qwen3.8-27B")
+
+
+def test_q8_is_not_half_of_f16():
+    """34 bytes per 32 values -- 32 quantised bytes and an f16 scale -- so
+    0.53125x. Halving it under-counted the cache by 6% on every model."""
+    assert config.Q8_0_RATIO == pytest.approx(0.53125)
+
+
+def test_the_price_of_a_token_is_conservative_where_it_was_measured():
+    """The dense 27B is linear in context to within 0.5%, so its resident slope
+    is a real per-token cost and the prediction can be checked against it. Over
+    is safe and under is a window the card cannot hold."""
+    predicted = catalog.kv_cost(_dense(), "vulkan")
+    assert predicted >= 37.73, "must not come out under what was measured"
+    assert predicted <= 37.73 * 1.05, "and must not be so cautious it is useless"
+
+
+def test_cuda_costs_more_per_token_than_vulkan():
+    """~10% more for the same cache, which compounds with depth rather than
+    being a flat tax. It is the larger of CUDA's two costs at a full window."""
+    dense = _dense()
+    assert catalog.kv_cost(dense, "cuda") > catalog.kv_cost(dense, "vulkan")
+
+
+def test_a_head_that_drafts_is_a_layer_that_costs():
+    """MTP's cache was the whole of the gap between this model's nominal and
+    resident cost. A model priced as though the head were free promises a
+    window that the head has already spent."""
+    dense = _dense()
+    without = catalog.Model(**{**vars(dense), "mtp": False})
+    assert catalog.kv_cost(dense) > catalog.kv_cost(without)
+
+
+@pytest.mark.parametrize("backend", ["vulkan", "cuda"])
+def test_the_plan_stays_under_the_ceiling_that_was_measured(backend):
+    """The failure this prevents is a window that loads the weights and then
+    dies on the KV allocation, which reads to a user as the model crashing
+    rather than as the plan having been too big."""
+    got = catalog.fit(_dense(), True, REFERENCE, backend).pool_q8
+    assert got <= CEILINGS[backend], (
+        f"{backend}: planned {got} against a measured ceiling of "
+        f"{CEILINGS[backend]}"
+    )
+
+
+def test_choosing_cuda_costs_context_and_the_planner_knows_it():
+    """Before this, `fit` gave both backends the same 172032 -- which is
+    exactly CUDA's ceiling, so the entire margin the planner believed it had
+    was gone. The number is quoted to users by `setup`, so it has to be real."""
+    dense = _dense()
+    vulkan = catalog.fit(dense, True, REFERENCE, "vulkan").pool_q8
+    cuda = catalog.fit(dense, True, REFERENCE, "cuda").pool_q8
+    assert cuda < vulkan
+    cost = 100 * (vulkan - cuda) / vulkan
+    assert 10 <= cost <= 20, f"CUDA costing {cost:.0f}% of the window"
+
+
+def test_a_model_without_an_mtp_head_is_priced_exactly_as_before():
+    """The split reorganises a measurement; it must not change one.
+
+    1.12 was measured end to end on Gemma-4-26B-A4B *through* the q8
+    arithmetic error, so the error was already absorbed into it. Correcting
+    Q8_0_RATIO while keeping 1.12 would double-count -- pricing Gemma 6% above
+    what it was actually measured at. Restated properly, everything with no
+    draft cache lands on the same number to the last decimal.
+    """
+    for m in catalog.load_catalog():
+        if m.mtp:
+            continue
+        before = m.kv_kib_per_token / 2 * 1.12       # the single old constant
+        assert catalog.kv_cost(m, "vulkan") == pytest.approx(before), m.name
+
+
+def test_no_model_is_priced_lower_than_it_used_to_be():
+    """The correction could have combined into a *larger* window somewhere,
+    which would be shipping a new over-promise while fixing an old one."""
+    for m in catalog.load_catalog():
+        before = m.kv_kib_per_token / 2 * 1.12
+        after = catalog.kv_cost(m, "vulkan")
+        assert after >= before or after == pytest.approx(before), (
+            f"{m.name} got cheaper: {before} -> {after}"
+        )
+
+
+def test_the_only_entries_that_move_are_the_ones_with_a_draft_cache():
+    """Which is the whole claim of this change: the models that were never
+    paying for MTP's second cache now do, and nothing else is touched."""
+    moved = {
+        m.name for m in catalog.load_catalog()
+        if catalog.kv_cost(m, "vulkan") != pytest.approx(
+            m.kv_kib_per_token / 2 * 1.12
+        )
+    }
+    assert moved == {"Qwen3.8-27B", "Qwen3.6-35B-A3B-MTP"}
+
+
+def test_the_declared_mtp_fields_match_the_real_checkpoints():
+    """The only test here that reads real weights.
+
+    `mtp` and `full_attention_layers` are the two things in models.yaml that
+    are declared rather than derived, and both are checkable against the file
+    they describe. `kv_heads x (key_length + value_length) x 2 x layers` also
+    has to reproduce the hand-entered nominal, which is what makes the whole
+    derivation trustworthy rather than merely tidy. Skipped in CI.
+    """
+    from lllm3090 import gguf
+
+    checked = 0
+    for entry in catalog.installed():
+        known = next(
+            (m for m in catalog.load_catalog() if m.name == entry["name"]), None
+        )
+        if known is None:
+            continue
+        assert gguf.has_mtp(entry["path"]) == known.mtp, (
+            f"{known.name}: models.yaml says mtp={known.mtp}, the file disagrees"
+        )
+        if known.mtp:
+            assert (
+                gguf.full_attention_layers(entry["path"])
+                == known.full_attention_layers
+            ), f"{known.name}: declared layer count is not the file's"
+        checked += 1
+    if not checked:
+        pytest.skip("no catalogued checkpoints on this machine")
+
+
+def _card(measured: bool) -> hardware.Profile:
+    return hardware.Profile(
+        id="t", name="t", compute_capability="8.6", vram_mib=24576,
+        bandwidth_gbs=0, measured=measured,
+    )
+
+
+def test_the_right_card_on_the_right_backend_is_just_measured():
+    applies, note = catalog.speed_qualifier(_card(True), "vulkan")
+    assert applies and note == "measured"
+
+
+def test_the_right_card_on_another_backend_does_not_describe_this_machine():
+    """The same dense 27B serves 54.8 tok/s under Vulkan and 84.9 under CUDA.
+    A figure labelled only "measured" on a CUDA engine understates by a third
+    while reading as a fact about the machine in front of you."""
+    applies, note = catalog.speed_qualifier(_card(True), "cuda")
+    assert not applies
+    assert note == "measured on vulkan"
+
+
+def test_another_card_says_so_as_it_always_did():
+    applies, note = catalog.speed_qualifier(_card(False), "vulkan")
+    assert not applies and note == "other card"
+
+
+def test_both_wrong_says_both():
+    """Collapsing the two into one boolean is what made "other card" a lie on
+    a CUDA engine with the right card in it."""
+    applies, note = catalog.speed_qualifier(_card(False), "cuda")
+    assert not applies
+    assert "other card" in note and "vulkan" in note
+
+
+def test_an_engine_that_could_not_be_asked_is_no_objection():
+    """`lllm3090 models` runs before `install-engine` on a fresh machine, and
+    the planner asks the engine which backend it is. Qualifying every row on
+    the strength of a backend that is about to be Vulkan is pure noise -- the
+    same rule capability_ok already follows for an unknown capability."""
+    applies, note = catalog.speed_qualifier(_card(True), catalog.engines.UNKNOWN)
+    assert applies and note == "measured"
+
+
+def test_a_cpu_engine_is_an_objection_even_on_the_measured_card():
+    """The licence above belongs to `unknown` alone.
+
+    `cpu` says a binary was asked and answered: no accelerator. Every speed in
+    the catalogue is a GPU speed, so an engine that has none cannot produce
+    them whatever card is in the machine -- and while the two shared a value,
+    a CPU-only build had them all labelled "measured"."""
+    applies, note = catalog.speed_qualifier(_card(True), catalog.engines.CPU)
+    assert not applies
+    assert note == "measured on vulkan"
+
+
+def test_every_row_carries_the_backend_and_what_to_say_about_it(monkeypatch):
+    """Three front ends render this column and they must not each invent the
+    wording, which is how a promise gets made in one place and withdrawn in
+    another."""
+    monkeypatch.setattr(catalog.engines, "backend", lambda directory=None: "cuda")
+    rows = catalog.catalog_for_panel(desktop=True)
+    assert rows, "the catalogue is not empty"
+    for row in rows:
+        assert row["backend"] == "cuda"
+        assert row["speed_note"]
+        assert not row["speed_applies"], "these speeds were taken on vulkan"
+
+
+def test_the_dense_27b_is_no_longer_quoted_at_its_pre_mtp_speed():
+    """It carries a multi-token prediction head, the engine turns that on by
+    itself, and 35 tok/s was what it did before that. A catalogue figure below
+    what the shipped configuration delivers is not conservative, it is wrong
+    about which configuration it is describing."""
+    dense = next(m for m in catalog.load_catalog() if m.name == "Qwen3.8-27B")
+    assert dense.expected_tok_s == 55

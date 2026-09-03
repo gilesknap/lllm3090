@@ -12,7 +12,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from . import config, hardware
+from . import config, engines, hardware
 
 
 def _smi(query: str) -> str | None:
@@ -104,13 +104,45 @@ def check_vulkan() -> tuple[bool, str]:
 
 
 def check_engine() -> tuple[bool, str]:
+    """The engine that would serve, and which backend it actually is.
+
+    The backend is named rather than assumed. Two can be installed at once and
+    they are not interchangeable -- the KV cache costs about 10% more per token
+    on CUDA, and the speculation settings that win on one lose on the other --
+    so "which one is active" stops being a rhetorical question the moment a
+    second one exists, and a doctor that does not answer it is describing an
+    install it has not looked at.
+    """
     binary = config.LLAMA_DIR / "llama-server"
     if not binary.exists():
         return False, (
             f"llama-server not installed at {binary} "
             "(run: lllm3090 install-engine)"
         )
-    return True, str(binary)
+    return True, f"{binary} ({engines.backend(config.LLAMA_DIR)})"
+
+
+def check_cuda_build() -> tuple[bool, str]:
+    """Whether a locally compiled CUDA engine is still the pinned build.
+
+    The most likely way this feature rots. A CUDA engine is compiled from one
+    commit and moving ``engines.LLAMA_BUILD`` does not move it, so an upgrade
+    leaves anyone who chose CUDA silently on an older engine than the one every
+    figure in the catalogue was measured against -- with nothing anywhere to
+    say so. This is the something that says so.
+    """
+    stale = engines.stale_cuda_builds()
+    if stale:
+        names = ", ".join(p.name for p in stale)
+        return False, (
+            f"{names} was compiled from an older tag than the pinned "
+            f"{engines.LLAMA_BUILD}. Rebuild with 'lllm3090 build-cuda', or "
+            f"delete it if you are back on Vulkan"
+        )
+    current = engines.cuda_builds()
+    if not current:
+        return True, "none built; the Vulkan engine is what serves"
+    return True, f"{', '.join(p.name for p in current)} (matches the pin)"
 
 
 def check_models_dir() -> tuple[bool, str]:
@@ -160,6 +192,7 @@ CHECKS = [
     ("driver", check_driver),
     ("vulkan", check_vulkan),
     ("engine", check_engine),
+    ("cuda build", check_cuda_build),
     ("models dir", check_models_dir),
     ("linger", check_linger),
 ]

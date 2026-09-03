@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
+import subprocess
 import tarfile
 import urllib.error
+from pathlib import Path
 
 import pytest
 
@@ -166,3 +169,300 @@ def test_an_unreachable_api_is_reported_as_such(monkeypatch):
     monkeypatch.setattr(engines.urllib.request, "urlopen", boom)
     with pytest.raises(engines.BuildError, match="could not read the release"):
         engines.published_digest(CANDIDATE)
+
+
+# ---------------------------------------------------------------------------
+# Which backend a build was compiled against
+# ---------------------------------------------------------------------------
+
+VULKAN_DEVICES = """\
+Available devices:
+  Vulkan0: NVIDIA GeForce RTX 3090 (24822 MiB, 20233 MiB free)
+"""
+
+CUDA_DEVICES = """\
+Available devices:
+  CUDA0: NVIDIA GeForce RTX 3090 (24125 MiB, 19511 MiB free)
+"""
+
+
+@pytest.fixture
+def probe(monkeypatch, tmp_path):
+    """An engine directory whose binary answers --list-devices with what you say."""
+    engines._BACKENDS.clear()
+    directory = tmp_path / "engine"
+    directory.mkdir()
+    (directory / "llama-server").write_text("#!/bin/sh\n")
+    calls: list[list[str]] = []
+
+    class Result:
+        stdout = ""
+        stderr = ""
+        returncode = 0
+
+    def answer(text: str, returncode: int = 0) -> None:
+        def fake_run(argv, **kw):
+            calls.append(argv)
+            out = Result()
+            out.stdout = text
+            out.returncode = returncode
+            return out
+
+        monkeypatch.setattr(engines.subprocess, "run", fake_run)
+
+    answer.directory = directory
+    answer.calls = calls
+    return answer
+
+
+def test_a_vulkan_build_says_so(probe):
+    probe(VULKAN_DEVICES)
+    assert engines.backend(probe.directory) == "vulkan"
+
+
+def test_a_cuda_build_says_so(probe):
+    probe(CUDA_DEVICES)
+    assert engines.backend(probe.directory) == "cuda"
+
+
+def test_a_second_card_does_not_become_a_second_backend(probe):
+    """CUDA0 and CUDA1 are two devices and one backend. Matching the printed
+    name whole would fail to recognise either."""
+    probe(
+        "Available devices:\n"
+        "  CUDA0: NVIDIA GeForce RTX 3090 (24125 MiB, 19511 MiB free)\n"
+        "  CUDA1: NVIDIA GeForce RTX 3090 (24125 MiB, 24000 MiB free)\n"
+    )
+    assert engines.backend(probe.directory) == "cuda"
+
+
+def test_a_build_with_no_accelerator_is_cpu(probe):
+    probe("Available devices:\n")
+    assert engines.backend(probe.directory) == "cpu"
+
+
+def test_an_engine_that_is_not_installed_is_not_a_crash(tmp_path):
+    """`lllm3090 models` runs before `install-engine` on a fresh machine, and
+    it asks the planner, which asks this.
+
+    `unknown`, not `cpu`: there is no binary to have a backend, and the two
+    answers are read differently downstream."""
+    engines._BACKENDS.clear()
+    assert engines.backend(tmp_path / "nothing-here") == "unknown"
+
+
+def test_the_probe_happens_once_per_binary(probe):
+    """`catalog.fit` runs once per catalogue entry per `lllm3090 models`. A
+    subprocess apiece would be felt."""
+    probe(CUDA_DEVICES)
+    for _ in range(5):
+        assert engines.backend(probe.directory) == "cuda"
+    assert len(probe.calls) == 1
+
+
+def test_a_replaced_binary_is_asked_again(probe):
+    """`install-engine --force` swaps the binary underneath a panel that has
+    been up for days. An answer cached from the old one would outlive it."""
+    probe(VULKAN_DEVICES)
+    assert engines.backend(probe.directory) == "vulkan"
+    binary = probe.directory / "llama-server"
+    os.utime(binary, (0, 0))
+    probe(CUDA_DEVICES)
+    assert engines.backend(probe.directory) == "cuda"
+
+
+def test_a_probe_that_could_not_be_run_is_not_remembered(probe, monkeypatch):
+    """A timeout under load is a fact about the moment. Caching it would make
+    one busy minute permanent, and the answer wrong for the rest of the day."""
+    def boom(argv, **kw):
+        raise subprocess.TimeoutExpired(argv, 60)
+
+    monkeypatch.setattr(engines.subprocess, "run", boom)
+    assert engines.backend(probe.directory) == "unknown"
+    probe(CUDA_DEVICES)
+    assert engines.backend(probe.directory) == "cuda"
+
+
+def test_a_probe_that_exits_non_zero_is_unknown_and_is_not_remembered(probe):
+    """The failure this module exists to prevent, reached the other way.
+
+    A build whose backend fails to initialise prints its error and exits
+    non-zero, and the device list is then empty -- which parses as `cpu`. Left
+    uninspected that is wrong once; *cached*, a CUDA engine is `cpu` for the
+    life of a panel process, `catalog.fit` drops its KV factor and fixed
+    overhead, and the plan promises a window the card cannot hold.
+    """
+    probe("ggml_cuda_init: failed to initialise CUDA: no device\n", returncode=1)
+    assert engines.backend(probe.directory) == "unknown"
+    probe(CUDA_DEVICES)
+    assert engines.backend(probe.directory) == "cuda", "the failure was remembered"
+
+
+def test_a_cpu_build_is_an_answer_not_an_absence(probe):
+    """`cpu` and `unknown` must not be the same value.
+
+    A CPU-only engine cannot produce the catalogue's GPU speeds on any card,
+    so it is not waved through the way an unasked engine is.
+    """
+    probe("Available devices:\n")
+    assert engines.backend(probe.directory) == "cpu"
+    assert engines.CPU != engines.UNKNOWN
+
+
+@pytest.mark.parametrize("build,want", [
+    ("b10715", "vulkan"),
+    ("b10715-cuda-sm86", "cuda"),
+])
+def test_the_real_engines_on_this_box_identify_themselves(build, want):
+    """The only test here that runs a real llama-server.
+
+    Everything above proves the parsing; this proves the parsing is of the
+    right thing. It is the one claim that cannot be made against a fixture --
+    that `--list-devices` is where the distinction is actually visible -- and
+    it is checkable because this machine has both builds on disk. Skipped
+    everywhere else, including CI.
+    """
+    engines._BACKENDS.clear()
+    directory = engines.bench_dir(build)
+    if not (directory / "llama-server").exists():
+        pytest.skip(f"{build} is not installed on this machine")
+    assert engines.backend(directory) == want
+
+
+# ---------------------------------------------------------------------------
+# Building a CUDA engine
+# ---------------------------------------------------------------------------
+
+
+def test_a_toolkit_too_old_to_build_this_is_not_usable():
+    """Ubuntu 26.04 ships 13.1, and it cannot compile this against glibc 2.43:
+    it declares rsqrt/rsqrtf without an exception specifier where glibc
+    declares them noexcept(true), so nvcc refuses every file including
+    <math.h>. Offering it would waste a download and fail at the first file."""
+    assert not engines.Toolkit(Path("/usr/local/cuda-13.1/bin/nvcc"), (13, 1)).usable
+    assert engines.Toolkit(Path("/usr/local/cuda-13.3/bin/nvcc"), (13, 3)).usable
+    assert engines.Toolkit(Path("/usr/local/cuda-14.0/bin/nvcc"), (14, 0)).usable
+
+
+def test_the_newest_usable_toolkit_is_the_one_chosen(monkeypatch):
+    """A machine can have several. /usr/local/cuda is an alternatives symlink
+    and points at whichever was configured last, so it is not the answer."""
+    monkeypatch.setattr(engines, "toolkits", lambda: [
+        engines.Toolkit(Path("/usr/local/cuda-14.0/bin/nvcc"), (14, 0)),
+        engines.Toolkit(Path("/usr/local/cuda-13.3/bin/nvcc"), (13, 3)),
+        engines.Toolkit(Path("/usr/local/cuda-13.1/bin/nvcc"), (13, 1)),
+    ])
+    assert engines.toolkit().version == (14, 0)
+
+
+def test_only_an_old_toolkit_is_the_same_as_none(monkeypatch):
+    """Answering "yes there is one" here starts a build that cannot finish."""
+    monkeypatch.setattr(engines, "toolkits", lambda: [
+        engines.Toolkit(Path("/usr/local/cuda-13.1/bin/nvcc"), (13, 1)),
+    ])
+    assert engines.toolkit() is None
+
+
+@pytest.mark.parametrize("capability,want", [
+    ("8.6", "86"), ("12.0", "120"), ("7.5", "75"),
+    ("unknown", None), ("", None), ("8", None),
+])
+def test_an_architecture_is_derived_from_the_card_or_not_at_all(capability, want):
+    assert engines.sm(capability) == want
+
+
+def test_the_directory_names_the_architecture_it_was_built_for(monkeypatch, tmp_path):
+    """The binary is compiled sm_<arch>-real and will not run on another
+    architecture at all. Named after the tag alone, a card swap would be an
+    engine that dies at load for no stated reason; named this way the absence
+    is legible."""
+    monkeypatch.setattr(config, "ENGINES_DIR", tmp_path)
+    assert engines.cuda_dir("b10715", "86").name == "b10715-cuda-sm86"
+    assert engines.cuda_dir("b10715", "120").name == "b10715-cuda-sm120"
+
+
+def _built(root, name):
+    directory = root / name
+    directory.mkdir(parents=True)
+    (directory / "llama-server").write_text("#!/bin/sh\n")
+    return directory
+
+
+def test_a_pin_move_orphans_a_cuda_build_and_something_has_to_notice(
+    monkeypatch, tmp_path
+):
+    """The most likely way this feature rots. A CUDA engine is tied to the
+    commit it was compiled from, and moving LLAMA_BUILD does not move it, so
+    an upgrade silently leaves a CUDA user on an older engine than everything
+    in the catalogue was measured against."""
+    monkeypatch.setattr(config, "ENGINES_DIR", tmp_path)
+    _built(tmp_path, "b10715-cuda-sm86")
+    monkeypatch.setattr(engines, "LLAMA_BUILD", "b10715")
+    assert engines.stale_cuda_builds() == []
+    monkeypatch.setattr(engines, "LLAMA_BUILD", "b10900")
+    assert [p.name for p in engines.stale_cuda_builds()] == ["b10715-cuda-sm86"]
+
+
+def test_a_downloaded_build_is_not_mistaken_for_a_compiled_one(monkeypatch, tmp_path):
+    """`fetch-engine` puts tags in the same directory. Only the compiled ones
+    can go stale in the way above -- a downloaded one is re-fetched by tag."""
+    monkeypatch.setattr(config, "ENGINES_DIR", tmp_path)
+    _built(tmp_path, "b10628")
+    _built(tmp_path, "b10715-cuda-sm86")
+    assert [p.name for p in engines.cuda_builds()] == ["b10715-cuda-sm86"]
+
+
+def test_a_half_built_directory_is_not_left_where_an_engine_goes(
+    monkeypatch, tmp_path
+):
+    """A directory holding some of an engine is indistinguishable from one
+    holding all of it, and would be launched as though it were complete."""
+    monkeypatch.setattr(config, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(engines.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+
+    class Silent:
+        stdout = iter(())
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(engines.subprocess, "Popen", lambda *a, **kw: Silent())
+    target = tmp_path / "engine"
+    with pytest.raises(engines.BuildError, match="no llama-server"):
+        engines.build_cuda(target, "86", engines.Toolkit(Path("nvcc"), (13, 3)))
+    assert not target.exists()
+
+
+def test_a_build_without_the_tools_to_do_it_fails_before_the_clone(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(config, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(engines.shutil, "which", lambda tool: None)
+    with pytest.raises(engines.BuildError, match="cmake|git"):
+        engines.build_cuda(
+            tmp_path / "engine", "86", engines.Toolkit(Path("nvcc"), (13, 3))
+        )
+
+
+def test_what_cuda_costs_in_window_is_derived_from_the_two_ceilings():
+    """So the figure `setup` quotes and the figure a planner would use cannot
+    drift apart, and re-measuring is one edit."""
+    assert engines.CUDA_CEILING < engines.VULKAN_CEILING
+    assert engines.cuda_window_cost() == 14
+
+
+def test_the_real_toolkits_on_this_box_are_ranked_correctly():
+    """The only test here that runs a real nvcc.
+
+    This machine has 13.1 and 13.3 installed and nvcc is on neither PATH nor
+    reliably at /usr/local/cuda -- which is the exact shape the search exists
+    for. Skipped everywhere else, CI included.
+    """
+    found = engines.toolkits()
+    if not found:
+        pytest.skip("no CUDA toolkit on this machine")
+    assert found == sorted(found, key=lambda t: t.version, reverse=True)
+    chosen = engines.toolkit()
+    if chosen is not None:
+        assert chosen.version >= engines.MIN_CUDA
+        assert chosen.nvcc.exists()

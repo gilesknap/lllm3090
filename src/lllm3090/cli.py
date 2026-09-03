@@ -14,7 +14,16 @@ from pathlib import Path
 
 import typer
 
-from . import catalog, config, engine, engines, hardware, preflight, storage
+from . import (
+    catalog,
+    config,
+    engine,
+    engines,
+    hardware,
+    preflight,
+    speculation,
+    storage,
+)
 from ._version import __version__
 
 # The pin, the digest recorded for it and the fetch itself live in
@@ -114,6 +123,111 @@ def fetch_engine(
     typer.echo(f"{build} fetched to {target}")
 
 
+def _cuda_target() -> tuple[Path, str] | None:
+    """Where a CUDA engine for *this* card would go, or None with a reason said.
+
+    The architecture comes from ``hardware.Profile``, which reads it off
+    ``nvidia-smi``. It is never typed: a hand-written architecture is a number
+    that goes stale the moment a card is replaced, and the binary it produces
+    does not fail cleanly, it runs on hardware it was not compiled for.
+    """
+    profile = hardware.detect()
+    if not profile.present:
+        typer.echo("No NVIDIA GPU here, so there is nothing to compile for.")
+        return None
+    arch = engines.sm(profile.compute_capability)
+    if arch is None:
+        typer.echo(
+            f"{profile.name} does not report a compute capability "
+            f"({profile.compute_capability!r}), and the build has to be told "
+            "one. Nothing here will guess it."
+        )
+        return None
+    return engines.cuda_dir(LLAMA_BUILD, arch), arch
+
+
+def _cuda_costs(target: Path) -> str:
+    """What saying yes actually costs, in the terms it will be paid in."""
+    return (
+        f"  - a local compile: 10-30 minutes, and the GPU is also your display\n"
+        f"  - about 2 GB in {target}, on top of the engine already installed\n"
+        f"  - about {engines.cuda_window_cost()}% of the context window. The "
+        f"dense 27B holds {engines.VULKAN_CEILING // 1024}k tokens on Vulkan "
+        f"and {engines.CUDA_CEILING // 1024}k on CUDA:\n"
+        f"    its KV costs ~10% more per token and the backend carries "
+        f"~230 MiB more fixed overhead\n"
+        f"  - a weaker identity. A downloaded build is a tag and a digest "
+        f"recorded in this repository;\n"
+        f"    a compiled one reports 'build 1, commit <sha>' and nobody "
+        f"attests to it"
+    )
+
+
+@app.command("build-cuda")
+def build_cuda(
+    force: bool = typer.Option(False, help="Rebuild even if it is already there."),
+) -> None:
+    """Compile a CUDA engine for this card, beside the installed one.
+
+    llama.cpp publishes CUDA archives for Windows only, so on Linux this is
+    compiled or it is absent. It is worth having: on the dense 27B, CUDA plus
+    multi-token prediction measures 1.55-1.60x the Vulkan engine that installs
+    by default, and 1.93x on copy-heavy work with ``--profile copy``.
+
+    Nothing is switched. The Vulkan engine keeps serving until you point
+    ``LLLM3090_LLAMA_DIR`` at what this builds -- a compiled binary is a
+    different promise from a verified download, and it is yours to make.
+    """
+    found = _cuda_target()
+    if found is None:
+        raise typer.Exit(1)
+    target, arch = found
+    if (target / "llama-server").exists() and not force:
+        typer.echo(f"Already built at {target} (use --force to rebuild)")
+        return
+
+    kit = engines.toolkit()
+    if kit is None:
+        installed = engines.toolkits()
+        if installed:
+            have = ", ".join(t.text for t in installed)
+            typer.echo(
+                f"CUDA {have} is installed, and this needs "
+                f"{'.'.join(str(p) for p in engines.MIN_CUDA)} or newer."
+            )
+        else:
+            typer.echo("No CUDA toolkit found.")
+        typer.echo(f"\n{engines.TOOLKIT_INSTRUCTIONS}")
+        raise typer.Exit(1)
+
+    typer.echo(
+        f"Building llama.cpp {LLAMA_BUILD} for sm_{arch} with CUDA {kit.text}."
+    )
+    typer.echo("This takes 10-30 minutes. Progress:\n")
+    last = ""
+
+    def progress(line: str) -> None:
+        nonlocal last
+        # Only the percentage moving is worth a line. A compile prints tens of
+        # thousands of them and repeats each percent many times over.
+        percent = line.split("]")[0] + "]"
+        if percent != last:
+            last = percent
+            typer.echo(f"  {line[:100]}")
+
+    try:
+        engines.build_cuda(target, arch, kit, on_progress=progress)
+    except engines.BuildError as exc:
+        typer.echo(f"\n{exc}")
+        raise typer.Exit(1) from exc
+    typer.echo(f"\nBuilt {target}")
+    typer.echo(f"Backend reported by the binary: {engines.backend(target)}")
+    typer.echo(
+        "\nStill inactive, deliberately -- the Vulkan engine keeps serving. "
+        f"To use it:\n\n    export LLLM3090_LLAMA_DIR={target}\n"
+    )
+
+
 @app.command()
 def models() -> None:
     """List the curated catalogue and what is already downloaded."""
@@ -147,10 +261,26 @@ def models() -> None:
             typer.echo(
                 "No desktop session: the full card is available for context."
             )
-    typer.echo("")
-    header = f"{'MODEL':<24}{'SIZE':>8}{'KIND':>10}{'CONTEXT':>12}  {'STATE':<16}SPEED"
-    typer.echo(header)
+    # A speed is a speed *of* something, and since a machine can carry two
+    # backends the card is no longer the whole of that. The same dense 27B
+    # serves 54.8 tok/s under Vulkan and 84.9 under CUDA, which is a wider
+    # spread than lies between some of the entries below -- so the column is
+    # captioned rather than left to be read as a fact about this machine.
     rows = catalog.catalog_for_panel()
+    backend = rows[0]["backend"] if rows else engines.UNKNOWN
+    if backend not in (config.REFERENCE_BACKEND, engines.UNKNOWN):
+        typer.echo(
+            f"The engine installed here is {backend}, and every speed below "
+            f"was measured on {config.REFERENCE_BACKEND}.\nThey are shown "
+            "unchanged rather than scaled: a ratio would be a guess printed in "
+            "the same\ntypeface as a measurement. Expect them to understate."
+        )
+    typer.echo("")
+    header = (
+        f"{'MODEL':<24}{'SIZE':>8}{'KIND':>10}{'CONTEXT':>12}  {'STATE':<16}"
+        f"SPEED ({config.REFERENCE_BACKEND}, decoding)"
+    )
+    typer.echo(header)
     cautions: list[str] = []
     for row in rows:
         # Two independent facts: whether it is on the disk, and what the card
@@ -170,7 +300,7 @@ def models() -> None:
             cautions.append(f"  {row['name']}: {row['status_note']}")
         speed = f"~{row['expected_tok_s']} tok/s" if row["expected_tok_s"] else "-"
         if row["verified"]:
-            speed += " (measured)" if row["speed_applies"] else " (other card)"
+            speed += f" ({row['speed_note']})"
         ctx = (
             f"{row['max_ctx'] // 1024}k x{row['parallel']}" if row["fits"] else "-"
         )
@@ -338,6 +468,13 @@ def start(
         None, min=1,
         help="Conversations sharing the pool. Default: 2, for subagents.",
     ),
+    profile: str = typer.Option(
+        None, "--profile",
+        help=(
+            "Speculation settings, by name. Each is refused on a backend it "
+            f"was not measured to win on. Known: {speculation.names()}."
+        ),
+    ),
     effort: str = typer.Option(
         None,
         help="Reasoning level for the whole session: "
@@ -357,6 +494,14 @@ def start(
     if entry is None:
         typer.echo(f"{model!r} is not installed. Try: lllm3090 models")
         raise typer.Exit(1)
+    # Resolved before anything is stopped. Which speculation settings pay is a
+    # property of the backend, and a refusal is worth nothing if the engine
+    # that was serving has already been killed to deliver it.
+    try:
+        spec = speculation.resolve(profile, engines.backend())
+    except speculation.Unavailable as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(1) from exc
     known = next((m for m in catalog.load_catalog() if m.name == model), None)
     if ctx is None:
         p = catalog.launch_plan(model, parallel)
@@ -372,9 +517,11 @@ def start(
     if warning:
         typer.echo(warning)
     template = known.chat_template if known else None
+    if profile is not None:
+        typer.echo(f"Speculation: {spec.name} -- {spec.summary}")
     ok, detail = engine.start(
         entry["path"], model, ctx, parallel, 300, template,
-        entry.get("mmproj"), effort,
+        entry.get("mmproj"), spec=spec, effort=effort,
     )
     typer.echo(detail)
     raise typer.Exit(0 if ok else 1)
@@ -522,6 +669,82 @@ def _configure_models_folder(requested: str | None) -> None:
     _echo_check("models dir", True, f"{default} -> {target}{where}")
 
 
+def _offer_cuda(yes: bool) -> None:
+    """Offer to compile a CUDA engine, and never do it unasked.
+
+    ``setup`` is the repair command and is run again after every upgrade, so
+    the common path through here is the one where the build already exists and
+    nothing happens. The other paths all end in Vulkan still being what serves:
+    this is an offer, and declining it -- or not being asked, which is what
+    ``--yes`` means here -- leaves a working install.
+
+    Deliberately does not apt-install the toolkit. That is 4-6 GB from a
+    third-party repository, and pulling it down during a command whose job is
+    to get a Vulkan engine working is not a reasonable reading of "setup".
+    """
+    profile = hardware.detect()
+    if not profile.present:
+        return
+    arch = engines.sm(profile.compute_capability)
+    if arch is None:
+        return
+    target = engines.cuda_dir(LLAMA_BUILD, arch)
+    if (target / "llama-server").exists():
+        # Idempotent: this is the path a re-run takes, and it must not rebuild.
+        _echo_check("cuda", True, f"built at {target}")
+        return
+
+    kit = engines.toolkit()
+    if kit is None:
+        older = ", ".join(t.text for t in engines.toolkits())
+        want = ".".join(str(p) for p in engines.MIN_CUDA)
+        _echo_check(
+            "cuda", True,
+            f"CUDA {older} installed, {want}+ needed" if older
+            else "no toolkit; Vulkan engine in use",
+        )
+        typer.echo(
+            f"\nA CUDA engine measures 1.55-1.60x the Vulkan one on the dense "
+            f"27B. Building one needs\nCUDA {want}+, which is not here. To get "
+            f"it:\n\n{engines.TOOLKIT_INSTRUCTIONS}\n\n"
+            "Carrying on with Vulkan, which is what installs by default and "
+            "needs none of that."
+        )
+        return
+
+    _echo_check("cuda", True, f"toolkit {kit.text} at {kit.nvcc}")
+    typer.echo(
+        f"\nThis machine could build a CUDA engine. On the dense 27B it "
+        f"measures 1.55-1.60x\nthe Vulkan engine that just installed, and "
+        f"1.93x on copy-heavy work. It costs:\n\n{_cuda_costs(target)}\n\n"
+        "Vulkan stays the active engine either way; this only makes the "
+        "choice available."
+    )
+    if yes:
+        # --yes means "do not prompt", and a 4-6 GB toolkit's worth of compile
+        # is not something to take silence as consent for. The plan is explicit
+        # that this is never built unprompted.
+        typer.echo("\nNot building it: --yes does not consent to a compile.")
+        typer.echo("Run 'lllm3090 build-cuda' when you want it.")
+        return
+    if not typer.confirm("\nBuild it now?", default=False):
+        typer.echo("Skipped. 'lllm3090 build-cuda' does it later.")
+        return
+    try:
+        build_cuda(force=False)
+    except typer.Exit:
+        # The one optional step in `setup`, and it must not decide the outcome
+        # of the required ones. `build_cuda` reports its own failure and exits
+        # 1; uncaught, that leaves `setup` at step 5, so step 6 never runs and
+        # the panel unit is never written -- a machine with no panel because a
+        # compile it was offered as a bonus did not finish. Vulkan is already
+        # installed and serving at this point either way.
+        typer.echo(
+            "\nThe CUDA build did not finish. Carrying on with Vulkan, which "
+            "is what serves\neither way; 'lllm3090 build-cuda' retries it."
+        )
+
+
 @app.command()
 def setup(
     yes: bool = typer.Option(False, "--yes", "-y", help="Do not prompt."),
@@ -586,7 +809,11 @@ def setup(
     typer.echo("")
     install_engine(force=False)
 
-    # 5. The panel.
+    # 5. CUDA, if this machine could have it and the user wants it.
+    typer.echo("")
+    _offer_cuda(yes)
+
+    # 6. The panel.
     if service:
         typer.echo("")
         install_service(enable=True)

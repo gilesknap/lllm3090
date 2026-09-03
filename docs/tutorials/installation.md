@@ -76,15 +76,17 @@ write to disk with no authentication. To reach it from another machine use an
 SSH tunnel — see [](../how-to/remote-access.md).
 :::
 
-## Why Vulkan and not CUDA
+## Why Vulkan by default, and what CUDA would buy
 
 llama.cpp publishes prebuilt CUDA binaries for Windows only, so on Linux CUDA
 means installing a 4–6 GB toolkit and compiling. The prebuilt **Vulkan** binary
-needs neither, and works on any NVIDIA driver with the Vulkan ICD installed.
+needs neither, works on any NVIDIA driver with the Vulkan ICD installed, and
+arrives as one download verified against a digest recorded in this repository.
+That is why it is what installs.
 
-CUDA is faster, and by a consistent amount rather than the large one this page
-used to claim. Measured here on an RTX 3090, both builds from the same llama.cpp
-commit:
+CUDA is faster. Measured here on an RTX 3090, both builds from the same
+llama.cpp commit, on the dense 27B — the numbers that matter are the ones with
+multi-token prediction on, because that is how the engine has always run:
 
 | | Vulkan | CUDA | |
 |---|---|---|---|
@@ -107,3 +109,27 @@ third of the speed for none of the setup**, and the setup is a 4–6 GB toolkit,
 local compile, and a binary that only runs on the card it was built for. That is
 still the trade this project makes, and
 [](../explanations/going-faster.md) sets out what it is made of.
+
+### Taking the trade
+
+`lllm3090 setup` offers to build a CUDA engine when it finds a toolkit new
+enough, and `lllm3090 build-cuda` does it on its own. Neither builds unprompted
+— `--yes` included — and neither switches: Vulkan keeps serving until you point
+`LLLM3090_LLAMA_DIR` at what was built. Beyond the toolkit and the compile, what
+it costs:
+
+- **CUDA 13.3 or newer, from NVIDIA's repository.** Not `apt install
+  nvidia-cuda-toolkit` — Ubuntu 26.04's 13.1 declares `rsqrt`/`rsqrtf` without
+  an exception specifier where glibc 2.43 declares them `noexcept(true)`, and
+  `nvcc` then refuses every file that includes `<math.h>`.
+- **A binary tied to one card.** Compiled `sm_<arch>-real` from what
+  `nvidia-smi` reports, so the directory is named `b10715-cuda-sm86` and a card
+  swap is a legible absence rather than a mystery crash.
+- **About 14% of the context window.** The dense 27B holds 196k tokens on
+  Vulkan and 168k on CUDA: KV costs ~10% more per token there and the backend
+  carries ~230 MiB more fixed overhead.
+- **A weaker identity.** A downloaded build is a tag and a digest reviewed in a
+  diff. A compiled one reports `build 1, commit <sha>`, because a shallow clone
+  has no tag history — only the commit is real, and nobody attests to the
+  binary. That is a different promise, and it is the reason nothing switches
+  the active engine for you.
