@@ -228,3 +228,20 @@ SLOT_SPLIT_GAIN = 1.5
 #: value of a fifth concurrent conversation is speculative on a single-GPU box,
 #: so the automatic grant stops here. Ask for more explicitly if you want it.
 MAX_AUTO_PARALLEL = 4
+
+
+#: Where the chosen engine is remembered, so that a choice survives a panel
+#: restart and a package upgrade.
+#:
+#: In the state directory rather than beside the code: ``uv tool install
+#: --force`` replaces the package wholesale, and a preference that lived there
+#: would be silently reset by an upgrade -- putting the user back on Vulkan
+#: with the panel still showing what they picked.
+ENGINE_CHOICE = STATE_DIR / "engine.json"
+
+#: Whether ``LLLM3090_LLAMA_DIR`` was set in the environment.
+#:
+#: An explicit override outranks anything stored, and the front ends need to
+#: know the difference to say *why* the switch is unavailable rather than
+#: showing a control that silently does nothing.
+LLAMA_DIR_FROM_ENV = "LLLM3090_LLAMA_DIR" in os.environ

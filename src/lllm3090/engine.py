@@ -20,7 +20,7 @@ import urllib.request
 from importlib import resources
 from pathlib import Path
 
-from . import config, gguf, speculation
+from . import config, engines, gguf, speculation
 
 #: Colour and cursor escapes llama.cpp writes when it thinks it has a terminal.
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -84,7 +84,13 @@ def _get(url: str, timeout: float = 3.0):
 
 
 def server_binary() -> Path:
-    return config.LLAMA_DIR / "llama-server"
+    """The llama-server that will serve, which is not always the installed one.
+
+    Resolved per call rather than held in a constant: the panel is a
+    long-running process, and an engine chosen in the browser has to reach the
+    next start without a restart of the thing the browser is talking to.
+    """
+    return engines.active_dir() / "llama-server"
 
 
 #: Answers to :func:`supports`, keyed by the binary that gave them.
@@ -118,7 +124,7 @@ def supports(flag: str) -> bool:
             out = subprocess.run(
                 [str(binary), "--help"],
                 capture_output=True, text=True, timeout=30, check=False,
-                env=dict(os.environ, LD_LIBRARY_PATH=str(config.LLAMA_DIR)),
+                env=dict(os.environ, LD_LIBRARY_PATH=str(server_binary().parent)),
             )
             _SUPPORTS[key] = flag in (out.stdout + out.stderr)
         except Exception:
@@ -424,7 +430,7 @@ def start(
         )
 
     config.STATE_DIR.mkdir(parents=True, exist_ok=True)
-    env = dict(os.environ, LD_LIBRARY_PATH=str(config.LLAMA_DIR))
+    env = dict(os.environ, LD_LIBRARY_PATH=str(server_binary().parent))
     # O_TRUNC so each run starts with its own log, and O_APPEND so every write
     # lands at the end of the file rather than at the engine's own offset. The
     # second matters because the log can be emptied from under a running

@@ -45,6 +45,9 @@ loses. The verdicts genuinely invert between backends, because verifying a
 draft is a batched forward pass and Vulkan gets nothing from a wider batch; see
 [](../explanations/going-faster.md).
 
+The panel's `engine` row does the same selection in a browser and remembers it
+across restarts; `LLLM3090_LLAMA_DIR` still wins over both.
+
 `build-cuda` compiles llama.cpp at the pinned tag with CUDA, into
 `engines/<tag>-cuda-sm<arch>` where the architecture comes from `nvidia-smi`
 rather than from anything typed. It needs CUDA 13.3 or newer — not the

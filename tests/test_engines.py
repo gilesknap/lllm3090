@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import shutil
 import subprocess
 import tarfile
 import urllib.error
@@ -466,3 +467,99 @@ def test_the_real_toolkits_on_this_box_are_ranked_correctly():
     if chosen is not None:
         assert chosen.version >= engines.MIN_CUDA
         assert chosen.nvcc.exists()
+
+
+# ---------------------------------------------------------------------------
+# Choosing which engine serves
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def two_engines(monkeypatch, tmp_path):
+    """A managed Vulkan install and a compiled CUDA build, as on this machine."""
+    engines._BACKENDS.clear()
+    managed = tmp_path / "llama.cpp"
+    cuda = tmp_path / "engines" / f"{engines.LLAMA_BUILD}-cuda-sm86"
+    for d in (managed, cuda):
+        d.mkdir(parents=True)
+        (d / "llama-server").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(config, "LLAMA_DIR", managed)
+    monkeypatch.setattr(config, "ENGINES_DIR", tmp_path / "engines")
+    monkeypatch.setattr(config, "ENGINE_CHOICE", tmp_path / "engine.json")
+    monkeypatch.setattr(config, "LLAMA_DIR_FROM_ENV", False)
+    monkeypatch.setattr(
+        engines, "backend",
+        lambda directory=None: "cuda" if "cuda" in str(
+            directory or engines.active_dir()) else "vulkan",
+    )
+    return managed, cuda
+
+
+def test_the_default_is_the_managed_install(two_engines):
+    managed, _ = two_engines
+    assert engines.active_dir() == managed
+
+
+def test_a_choice_survives_this_process(two_engines):
+    """The whole point of a file rather than a variable: the panel is started
+    by systemd and restarted by an upgrade, and a choice made in a browser has
+    to outlive both."""
+    _, cuda = two_engines
+    engines.select(cuda.name)
+    assert engines.active_dir() == cuda
+    assert config.ENGINE_CHOICE.exists()
+
+
+def test_choosing_the_managed_install_clears_rather_than_pins(two_engines):
+    """`install-engine` is entitled to move that directory. Recording it by
+    name would pin a path that is not ours to pin."""
+    managed, cuda = two_engines
+    engines.select(cuda.name)
+    engines.select(managed.name)
+    assert engines.active_dir() == managed
+    assert not config.ENGINE_CHOICE.exists()
+
+
+def test_the_environment_outranks_a_stored_choice(two_engines, monkeypatch):
+    """`LLLM3090_LLAMA_DIR` is the documented way to run an engine this code
+    knows nothing about, and it is about one invocation. A stored preference
+    must not quietly win over it."""
+    managed, cuda = two_engines
+    engines.select(cuda.name)
+    monkeypatch.setattr(config, "LLAMA_DIR_FROM_ENV", True)
+    assert engines.active_dir() == managed
+
+
+def test_a_choice_that_no_longer_exists_falls_back(two_engines):
+    """A `build-cuda --force` that dies halfway removes the directory. Falling
+    back to the install that is still there beats refusing to start anything."""
+    _, cuda = two_engines
+    engines.select(cuda.name)
+    shutil.rmtree(cuda)
+    engines._BACKENDS.clear()
+    assert engines.active_dir() == config.LLAMA_DIR
+
+
+def test_only_an_engine_that_is_here_can_be_selected(two_engines):
+    """The panel is an unauthenticated loopback server that starts processes.
+    It sends a name, which is looked up; a path would let a request name any
+    binary on the disk."""
+    with pytest.raises(ValueError):
+        engines.select("../../../bin/sh")
+    with pytest.raises(ValueError):
+        engines.select("b10715-cuda-sm99")
+
+
+def test_a_stale_build_is_offered_and_flagged(monkeypatch, tmp_path):
+    """It runs, so refusing it would be wrong; every catalogue figure was
+    measured on the pin, so offering it silently would be worse."""
+    engines._BACKENDS.clear()
+    old = tmp_path / "engines" / "b00001-cuda-sm86"
+    old.mkdir(parents=True)
+    (old / "llama-server").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(config, "LLAMA_DIR", tmp_path / "absent")
+    monkeypatch.setattr(config, "ENGINES_DIR", tmp_path / "engines")
+    monkeypatch.setattr(engines, "backend", lambda directory=None: "cuda")
+    found = engines.choices()
+    assert [c.id for c in found] == ["b00001-cuda-sm86"]
+    assert found[0].stale

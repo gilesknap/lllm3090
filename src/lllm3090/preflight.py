@@ -113,13 +113,13 @@ def check_engine() -> tuple[bool, str]:
     second one exists, and a doctor that does not answer it is describing an
     install it has not looked at.
     """
-    binary = config.LLAMA_DIR / "llama-server"
+    binary = engines.active_dir() / "llama-server"
     if not binary.exists():
         return False, (
             f"llama-server not installed at {binary} "
             "(run: lllm3090 install-engine)"
         )
-    return True, f"{binary} ({engines.backend(config.LLAMA_DIR)})"
+    return True, f"{binary} ({engines.backend(binary.parent)})"
 
 
 def check_cuda_build() -> tuple[bool, str]:

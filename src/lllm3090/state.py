@@ -16,7 +16,7 @@ import shutil
 import subprocess
 from typing import Any
 
-from . import catalog, config, downloads, engine, hardware
+from . import catalog, config, downloads, engine, engines, hardware, speculation
 from ._version import __version__
 
 
@@ -89,6 +89,44 @@ def installed_models() -> list[dict[str, Any]]:
     return rows
 
 
+def engine_choices() -> dict[str, Any]:
+    """Which engines this machine has, which one serves, and what that buys.
+
+    Two backends can sit on one disk and they are not interchangeable, so this
+    is a choice rather than a detail: CUDA measures 1.55-1.60x the Vulkan
+    engine on the dense 27B, costs about a seventh of the context window, and
+    unlocks a speculation profile that *loses* on Vulkan. A front end that
+    offered the switch without those three facts beside it would be offering a
+    coin flip.
+
+    ``locked`` says the choice is not the panel's to make: ``LLLM3090_LLAMA_DIR``
+    outranks anything stored, and a control that silently did nothing would be
+    worse than no control.
+    """
+    active = engines.active_dir()
+    return {
+        "locked": config.LLAMA_DIR_FROM_ENV,
+        "active": active.name,
+        "active_backend": engines.backend(active),
+        "options": [
+            {
+                "id": c.id,
+                "backend": c.backend,
+                "installed": c.installed,
+                "stale": c.stale,
+                "active": c.path == active,
+                # What picking this one changes, in the terms the panel is
+                # already showing: speed, window, and which profiles apply.
+                "profiles": [
+                    p.name for p in speculation.PROFILES.values()
+                    if p.allowed_on(c.backend)
+                ],
+            }
+            for c in engines.choices()
+        ],
+    }
+
+
 def snapshot() -> dict[str, Any]:
     """Everything a front end needs to draw the machine, in one call.
 
@@ -115,4 +153,5 @@ def snapshot() -> dict[str, Any]:
         "catalog": catalog.catalog_for_panel(),
         "downloads": downloads.all_downloads(),
         "models_dir": str(config.MODELS_DIR),
+        "engines": engine_choices(),
     }

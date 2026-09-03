@@ -103,6 +103,28 @@ change is only visible in the source it does not need a line here.
 
 ### Added
 
+- **The panel picks the backend.** A machine can carry a Vulkan engine and a
+  compiled CUDA one at the same time, and until now the only way to say which
+  served was `LLLM3090_LLAMA_DIR` — an environment variable, which reaches a
+  shell and therefore the CLI, but not a panel that systemd started at boot.
+  The model list now carries an `engine` row, and the choice is remembered in
+  `~/.local/state/lllm3090/engine.json` so it survives a panel restart and a
+  `uv tool install --force`.
+
+  It is a real choice rather than a detail, so the three consequences are shown
+  beside it: CUDA decodes about 1.6× Vulkan on the dense 27B, costs about a
+  seventh of the context window — every figure in the list recomputes when you
+  switch — and unlocks `--profile copy`, which is *measured to lose* on Vulkan.
+
+  Switching is not restarting. A running engine has its binary open and goes on
+  serving from it, so the two are separate decisions and the panel says which
+  one is still outstanding rather than taking a loaded model down for you.
+  `LLLM3090_LLAMA_DIR` still outranks anything stored, and the control renders
+  disabled with that as its reason rather than silently doing nothing.
+
+  A locally compiled engine older than the pinned build is offered — it runs —
+  and flagged, because no catalogue figure was measured on it.
+
 - **`lllm3090 build-cuda`, and a `setup` that offers it.** llama.cpp publishes
   CUDA archives for Windows only, so on Linux a CUDA engine is something the
   machine compiles or does not have. It is worth compiling: on the dense 27B,
