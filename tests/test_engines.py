@@ -310,6 +310,7 @@ def test_a_cpu_build_is_an_answer_not_an_absence(probe):
     assert engines.CPU != engines.UNKNOWN
 
 
+@pytest.mark.real_machine
 @pytest.mark.parametrize("build,want", [
     ("b10715", "vulkan"),
     ("b10715-cuda-sm86", "cuda"),

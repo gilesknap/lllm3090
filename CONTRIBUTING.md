@@ -62,6 +62,18 @@ loopback, and an engine test fakes `Popen` rather than launching anything.
 Coverage is uneven by design rather than by neglect: the catalogue arithmetic
 is what decides whether a model fits, so it is tested hardest.
 
+`tests/conftest.py` points every path in `config` — models, engines, state — at
+an empty temporary directory before each test, so the suite sees the same
+machine on your laptop as it does in CI. It is not a tidiness measure: before
+it existed, choosing the CUDA engine once from the panel left a stored choice
+that made 33 unrelated tests fail, and only on a machine that had been used.
+
+Two tests opt back out with `@pytest.mark.real_machine`, because checking the
+declared MTP flags against the real weights and the real engines against
+`--list-devices` is the whole point of them. Both skip themselves where those
+files are absent, which is why CI stays green without them. If you add a third,
+it skips too.
+
 ## Adding a model to the catalogue
 
 1. Add the entry to `src/lllm3090/data/models.yaml`. See
