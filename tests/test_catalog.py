@@ -719,6 +719,7 @@ def test_the_only_entries_that_move_are_the_ones_with_a_draft_cache():
     assert moved == {"Qwen3.8-27B", "Qwen3.6-35B-A3B-MTP"}
 
 
+@pytest.mark.real_machine
 def test_the_declared_mtp_fields_match_the_real_checkpoints():
     """The only test here that reads real weights.
 

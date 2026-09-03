@@ -70,6 +70,9 @@ ignore = ["BLE001"]
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
+markers = [
+    "real_machine: reads this machine's own models or engines rather than a\n    fixture, and skips itself where they are absent. Everything unmarked runs\n    against empty temporary directories -- see tests/conftest.py.",
+]
 
 [tool.mypy]
 ignore_missing_imports = true
