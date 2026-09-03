@@ -170,5 +170,9 @@ def snapshot() -> dict[str, Any]:
         "catalog": catalog.catalog_for_panel(),
         "downloads": downloads.all_downloads(),
         "models_dir": str(config.MODELS_DIR),
+        # Where each badge on a row goes when clicked. Sent rather than written
+        # into the page so that one map is both what the browser follows and
+        # what the test suite checks against the documentation source.
+        "docs": {"base": config.DOCS_URL, "badges": config.BADGE_DOCS},
         "engines": engine_choices(),
     }

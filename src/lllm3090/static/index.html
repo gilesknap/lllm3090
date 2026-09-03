@@ -90,6 +90,12 @@
   .rhead .c-act{display:flex;align-items:center;justify-content:flex-end}
   .tag{font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;padding:.1rem .35rem;
        border-radius:3px;border:1px solid var(--rule);color:var(--ink2);white-space:nowrap}
+  /* A badge naming a concept is only useful if the concept is findable, so
+     each one that has a page is a link to it. Underlined on hover rather than
+     always: five permanently underlined chips on every row is a lot of ink for
+     something most readers already know. */
+  a.tag{text-decoration:none;cursor:pointer}
+  a.tag:hover{border-color:currentColor;text-decoration:underline}
   .tag.vis{background:var(--rule)}
   /* MTP is the one badge that changes what the engine does rather than what
      the model is, so it is the one that is coloured. */
@@ -273,6 +279,28 @@ function actionHtml(c){
   return `<button class="small" onclick="act(event,'/api/download/${key}')">Get</button>`;
 }
 
+// Where each badge points, from /api/status, so the page and the test that
+// checks these anchors against the docs read one map rather than two.
+let docLinks = {base: '', badges: {}};
+
+function tagHtml(label, extra, docKey){
+  const cls = 'tag' + (extra ? ' ' + extra : '');
+  // The key is usually the label. It is not for "no mtp", which is about the
+  // same subject and reads as its own word.
+  const path = docLinks.badges[docKey || label];
+  if (!path) return `<span class="${cls}">${esc(label)}</span>`;
+  // The page is `<page>.html#<anchor>`, and the map holds the two joined the
+  // way a Markdown link writes them, so the suffix goes in the middle.
+  const [page, anchor] = path.split('#');
+  const href = `${docLinks.base}/${page}.html${anchor ? '#' + anchor : ''}`;
+  // stopPropagation because the badge sits inside .rhead, whose click toggles
+  // the row: without it, following the link would also expand what you are
+  // leaving behind.
+  return `<a class="${cls}" href="${esc(href)}"
+    target="_blank" rel="noopener" onclick="event.stopPropagation()"
+    >${esc(label)}</a>`;
+}
+
 function rowHtml(c, groupLabel){
   const open = expandedId === rowKey(c);
   const ctx = c.fits && c.max_ctx ? `${fmtCtx(c.max_ctx)} × ${c.parallel}` : '—';
@@ -284,11 +312,11 @@ function rowHtml(c, groupLabel){
       <span class="dot ${c.running ? 'run' : c.onDisk ? 'disk' : ''}"></span>
       <span class="c-name">
         <span class="nm">${esc(c.name)}</span>
-        <span class="tag">${esc(c.kind)}</span>
-        ${c.vision ? '<span class="tag vis">vision</span>' : ''}
-        ${c.mtp ? `<span class="tag ${c.mtp_note ? 'warn' : 'mtp'}">mtp</span>` : ''}
-        ${c.mtp_note && !c.mtp ? '<span class="tag warn">no mtp</span>' : ''}
-        ${c.chat_template ? '<span class="tag">template</span>' : ''}
+        ${tagHtml(c.kind)}
+        ${c.vision ? tagHtml('vision', 'vis') : ''}
+        ${c.mtp ? tagHtml('mtp', c.mtp_note ? 'warn' : 'mtp') : ''}
+        ${c.mtp_note && !c.mtp ? tagHtml('no mtp', 'warn', 'mtp') : ''}
+        ${c.chat_template ? tagHtml('template') : ''}
       </span>
       <span class="c-size">${c.gb} GB</span>
       <span class="c-ctx">${ctx}</span>
@@ -392,6 +420,7 @@ async function refresh(){
 
   renderEngines(s);
 
+  if (s.docs) docLinks = s.docs;
   const rows = mergedRows(s);
   // Two things that are true of every row, said once above them rather than
   // nine times inside them.

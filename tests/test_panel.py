@@ -466,3 +466,11 @@ def test_the_page_is_told_what_every_model_is_started_with(client):
     # the flag is there -- and reporting q8_0 anyway would describe memory the
     # card is not going to give back.
     assert fixed["draft_cache_type"] is None
+
+
+def test_the_page_is_told_where_each_badge_goes(client):
+    """The map is sent rather than written into the page, so that what the
+    browser follows and what `test_doc_links.py` checks are one thing."""
+    docs = client.get("/api/status").json()["docs"]
+    assert docs["base"].startswith("https://")
+    assert docs["badges"]["mtp"].startswith("explanations/what-makes-it-fast#")
