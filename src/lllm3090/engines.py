@@ -237,7 +237,7 @@ def backend(directory: Path | None = None) -> str:
     Cached, because ``catalog.fit`` runs once per catalogue entry per
     ``lllm3090 models`` and a subprocess apiece would be felt.
     """
-    directory = directory or config.LLAMA_DIR
+    directory = directory or active_dir()
     binary = directory / "llama-server"
     try:
         key = (str(binary), binary.stat().st_mtime)
@@ -546,3 +546,123 @@ def build_cuda(
         if path.exists():
             path.chmod(0o755)
     return target
+
+
+# ---------------------------------------------------------------------------
+# Which engine actually serves
+# ---------------------------------------------------------------------------
+# Two backends can sit on this disk at once and they are not interchangeable:
+# CUDA is worth 1.55-1.60x on the dense 27B and costs about a seventh of the
+# window, and the speculation settings that win on one lose on the other. So
+# which one serves is a choice, and until now the only way to express it was an
+# environment variable -- which reaches a shell and therefore the CLI, but not
+# a panel started by systemd minutes after boot.
+
+
+@dataclass(frozen=True)
+class Choice:
+    """One engine this machine could serve with."""
+
+    path: Path
+    backend: str
+    #: True for the engine ``install-engine`` manages. The others are compiled.
+    installed: bool
+    #: Compiled against a build that is no longer the pinned one. Offered
+    #: anyway -- it works -- but every catalogue figure was measured on the pin.
+    stale: bool
+
+    @property
+    def id(self) -> str:
+        """What a front end sends back to choose this one.
+
+        The directory name, never a path. The panel is a loopback HTTP server
+        that starts processes, and accepting a path from it would let a
+        request name any binary on the disk; a name is looked up in the list
+        this function produced, so nothing outside it can be selected.
+        """
+        return self.path.name
+
+
+def choices() -> list[Choice]:
+    """Every engine on this machine that could serve, best-known first.
+
+    The managed install first because it is what the catalogue's speeds were
+    measured on and what a fresh machine has.
+    """
+    stale = {d.name for d in stale_cuda_builds()}
+    found: list[Choice] = []
+    if (config.LLAMA_DIR / "llama-server").exists():
+        found.append(Choice(
+            path=config.LLAMA_DIR,
+            backend=backend(config.LLAMA_DIR),
+            installed=True,
+            stale=False,
+        ))
+    for d in cuda_builds():
+        found.append(Choice(
+            path=d, backend=backend(d), installed=False, stale=d.name in stale,
+        ))
+    return found
+
+
+def chosen() -> Path | None:
+    """The engine directory recorded as chosen, or None.
+
+    None covers every way of not having an answer -- never chosen, the file
+    corrupted, the directory deleted since. A stored choice that no longer
+    names a runnable engine is *not* an error to raise at the caller: the
+    engine it named can be removed by a ``build-cuda --force`` that failed
+    halfway, and the right behaviour then is to fall back to the install that
+    is still there rather than to refuse to start anything.
+    """
+    try:
+        name = json.loads(config.ENGINE_CHOICE.read_text())["dir"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return next((c.path for c in choices() if c.id == name), None)
+
+
+def active_dir() -> Path:
+    """The engine directory that will actually serve the next start.
+
+    Precedence, highest first:
+
+    * ``LLLM3090_LLAMA_DIR``. An explicit override from the environment, and
+      the documented way to run an engine this code knows nothing about --
+      a build under test, a distribution's own. It outranks a stored choice
+      because it is the more specific statement, and because a variable set in
+      a shell is visibly about *this* invocation.
+    * What :func:`select` recorded.
+    * The managed install.
+    """
+    if config.LLAMA_DIR_FROM_ENV:
+        return config.LLAMA_DIR
+    return chosen() or config.LLAMA_DIR
+
+
+def select(choice_id: str | None) -> Path:
+    """Record which engine serves from now on. Returns the directory chosen.
+
+    ``None`` clears the choice, which is how a front end says "back to the
+    managed install" without having to know its name.
+
+    Nothing is started, stopped or copied. A running engine is a process that
+    already has its binary open and keeps serving from it; this decides what
+    the *next* start loads, and the front ends say so rather than implying a
+    switch that has not happened.
+    """
+    config.ENGINE_CHOICE.parent.mkdir(parents=True, exist_ok=True)
+    if choice_id is None:
+        config.ENGINE_CHOICE.unlink(missing_ok=True)
+        return config.LLAMA_DIR
+    match = next((c for c in choices() if c.id == choice_id), None)
+    if match is None:
+        raise ValueError(f"no engine here called {choice_id!r}")
+    if match.installed:
+        # Recording the managed install by name would pin it to a path that
+        # `install-engine` is entitled to move. Clearing says the same thing
+        # and keeps saying it afterwards.
+        config.ENGINE_CHOICE.unlink(missing_ok=True)
+        return match.path
+    config.ENGINE_CHOICE.write_text(json.dumps({"dir": match.id}) + "\n")
+    return match.path

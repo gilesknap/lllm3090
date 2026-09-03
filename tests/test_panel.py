@@ -353,3 +353,78 @@ def test_a_broken_resume_check_does_not_stop_the_panel_coming_up(
     monkeypatch.setattr(downloads, "resume_interrupted", explode)
     with TestClient(panel.app) as started:
         assert started.get("/api/logs").status_code == 200
+
+
+# --- choosing the backend ----------------------------------------------------
+
+
+@pytest.fixture
+def engine_choice(client, tmp_path, monkeypatch):
+    """The panel, plus the two engines this machine actually has."""
+    from lllm3090 import engines
+    managed = tmp_path / "llama.cpp"
+    cuda = tmp_path / "engines" / f"{engines.LLAMA_BUILD}-cuda-sm86"
+    for d in (managed, cuda):
+        d.mkdir(parents=True)
+        (d / "llama-server").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(config, "LLAMA_DIR", managed)
+    monkeypatch.setattr(config, "ENGINES_DIR", tmp_path / "engines")
+    monkeypatch.setattr(config, "ENGINE_CHOICE", tmp_path / "engine.json")
+    monkeypatch.setattr(config, "LLAMA_DIR_FROM_ENV", False)
+    monkeypatch.setattr(
+        engines, "backend",
+        lambda directory=None: "cuda" if "cuda" in str(
+            directory or engines.active_dir()) else "vulkan",
+    )
+    return client, cuda
+
+
+def test_the_panel_can_switch_backend(engine_choice):
+    client, cuda = engine_choice
+    r = client.post(f"/api/engine/select?engine_id={cuda.name}")
+    assert r.status_code == 200, r.text
+    assert r.json()["backend"] == "cuda"
+    assert client.get("/api/status").json()["engines"]["active"] == cuda.name
+
+
+def test_switching_does_not_restart_what_is_running(engine_choice, monkeypatch):
+    """The two are separate decisions, and the second costs minutes of load
+    time and the VRAM of whatever is answering right now."""
+    client, cuda = engine_choice
+    monkeypatch.setattr(engine, "status", lambda: {
+        "running": True, "pid": 4242, "port": config.ENGINE_PORT,
+        "answering": True, "model": "Qwen3.8-27B",
+    })
+    stopped: list[bool] = []
+    monkeypatch.setattr(engine, "stop", lambda: stopped.append(True))
+    body = client.post(f"/api/engine/select?engine_id={cuda.name}").json()
+    assert not stopped, "a switch must not take down a working engine"
+    assert body["restart_needed"] is True
+    assert "restart" in body["detail"]
+
+
+def test_an_environment_override_refuses_rather_than_doing_nothing(
+    engine_choice, monkeypatch
+):
+    """The page renders the control disabled; a request arriving anyway is a
+    stale tab, and silently succeeding would teach the wrong thing."""
+    client, cuda = engine_choice
+    monkeypatch.setattr(config, "LLAMA_DIR_FROM_ENV", True)
+    r = client.post(f"/api/engine/select?engine_id={cuda.name}")
+    assert r.status_code == 409
+    assert "LLLM3090_LLAMA_DIR" in r.json()["error"]
+
+
+def test_an_unknown_engine_is_refused(engine_choice):
+    client, _ = engine_choice
+    assert client.post("/api/engine/select?engine_id=%2Fbin%2Fsh").status_code == 400
+
+
+def test_status_says_which_profiles_each_backend_allows(engine_choice):
+    """The switch changes more than a speed: `copy` is measured to win on CUDA
+    and to lose on Vulkan, so the page can say what picking one buys."""
+    client, _ = engine_choice
+    options = client.get("/api/status").json()["engines"]["options"]
+    by_backend = {o["backend"]: o["profiles"] for o in options}
+    assert by_backend["vulkan"] == ["default"]
+    assert "copy" in by_backend["cuda"]

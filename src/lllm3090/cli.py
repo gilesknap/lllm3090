@@ -416,14 +416,14 @@ def bench(
     if entry is None:
         typer.echo(f"{model!r} is not installed. Try: lllm3090 models")
         raise typer.Exit(1)
-    binary = config.LLAMA_DIR / "llama-bench"
+    binary = engines.active_dir() / "llama-bench"
     if not binary.exists():
         typer.echo(f"llama-bench not found at {binary}; run 'lllm3090 setup'")
         raise typer.Exit(1)
 
     profile = hardware.detect()
     typer.echo(f"Benchmarking {model} on {profile.name} -- this takes a few minutes.\n")
-    env = dict(os.environ, LD_LIBRARY_PATH=str(config.LLAMA_DIR))
+    env = dict(os.environ, LD_LIBRARY_PATH=str(binary.parent))
     result = subprocess.run(
         [str(binary), "-m", entry["path"], "-ngl", "999", "-p", "512", "-n", "128"],
         env=env, capture_output=True, text=True, check=False,

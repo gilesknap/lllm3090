@@ -17,7 +17,7 @@ from importlib import resources
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
-from . import catalog, config, downloads, engine, state
+from . import catalog, config, downloads, engine, engines, state
 from ._version import __version__
 
 
@@ -86,6 +86,43 @@ async def start(model: str, ctx: int | None = None, parallel: int | None = None)
             detail = f"{warning}\n{detail}"
         _last.update(action=f"start {model}", ok=ok, detail=detail[-400:])
     return {"ok": ok, "detail": _last["detail"], "warning": warning}
+
+
+@app.post("/api/engine/select")
+async def select_engine(engine_id: str | None = None):
+    """Choose which backend serves from the next start onwards.
+
+    Deliberately not a restart. A running engine has its binary open and goes
+    on serving from it whatever this writes, so switching and reloading are two
+    decisions: the second costs minutes of load time and the VRAM of whatever
+    is answering right now. The response says which one is still needed.
+    """
+    if config.LLAMA_DIR_FROM_ENV:
+        # The page renders the control disabled in this case; a request
+        # arriving anyway is a stale tab, and silently doing nothing would be
+        # the one outcome that teaches the user the wrong thing.
+        return JSONResponse(
+            {"error": "LLLM3090_LLAMA_DIR is set in the panel's environment "
+                      "and outranks a choice made here"},
+            status_code=409,
+        )
+    if _busy.locked():
+        return JSONResponse({"error": "busy"}, status_code=409)
+    async with _busy:
+        try:
+            chosen = await asyncio.to_thread(engines.select, engine_id)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        backend = await asyncio.to_thread(engines.backend, chosen)
+        running = engine.status()["running"]
+        detail = (
+            f"{backend} engine selected. The model now loaded is still being "
+            "served by the previous engine -- restart it to switch."
+            if running else f"{backend} engine selected."
+        )
+        _last.update(action=f"engine {backend}", ok=True, detail=detail)
+    return {"ok": True, "backend": backend, "restart_needed": running,
+            "detail": detail}
 
 
 @app.post("/api/stop")

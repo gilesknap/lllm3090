@@ -50,6 +50,12 @@
   /* the merged model list */
   .listhead{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;flex-wrap:wrap}
   .note{color:var(--ink2);font-size:.74rem;margin:.45rem 0 0;line-height:1.55}
+  .engines{display:flex;align-items:baseline;gap:.6rem;flex-wrap:wrap;
+           margin:.7rem 0 0;padding:.6rem 0 0;border-top:1px solid var(--rule)}
+  .engines .note{margin:0;flex:1 1 14rem}
+  .engines button{margin-right:.35rem}
+  .engines button.on{background:var(--okbg);color:var(--ok);
+                     border-color:var(--ok);font-weight:700}
   #catnote{flex:1 1 14rem;min-width:0;text-align:right;margin:0;text-wrap:pretty}
   .cols,.rhead{display:flex;align-items:center;gap:.6rem}
   .cols{padding:.8rem .3rem .35rem;border-bottom:1px solid var(--rule);
@@ -126,6 +132,11 @@
     <div class="listhead">
       <strong>Models</strong>
       <p class="note" id="catnote">Sized for this card. Context figures assume a q8 KV cache.</p>
+    </div>
+    <div class="engines" id="engines" style="display:none">
+      <span class="k">engine</span>
+      <span id="engbtns"></span>
+      <span class="note" id="engnote"></span>
     </div>
     <div class="cols">
       <span class="c-name">model</span>
@@ -264,6 +275,47 @@ function act(ev, url){
   post(url);
 }
 
+// The backend is a choice with three consequences the page is already showing
+// -- decode speed, the context window, and which speculation profiles apply --
+// so the note spells them out rather than leaving "cuda" to mean something.
+function renderEngines(s){
+  const eng = s.engines;
+  if (!eng || eng.options.length < 2){
+    // One engine is not a choice. The row would be a control that cannot be
+    // operated, which reads as something broken rather than as something absent.
+    $('engines').style.display = 'none';
+    return;
+  }
+  $('engines').style.display = '';
+  $('engbtns').innerHTML = eng.options.map(o => {
+    const label = o.backend + (o.stale ? ' (old build)' : '');
+    return `<button class="small ${o.active ? 'on' : ''}"
+      ${o.active || eng.locked || s.busy ? 'disabled' : ''}
+      onclick="pickEngine('${esc(o.installed ? '' : o.id)}')">${esc(label)}</button>`;
+  }).join('');
+
+  const active = eng.options.find(o => o.active);
+  if (eng.locked){
+    $('engnote').textContent =
+      'Fixed by LLLM3090_LLAMA_DIR in the panel\u2019s environment.';
+    return;
+  }
+  const profiles = active ? active.profiles.filter(p => p !== 'default') : [];
+  const extra = profiles.length
+    ? ` Speculation profiles here: default, ${profiles.join(', ')}.`
+    : ' Speculation: the multi-token prediction head only \u2014 the copy '
+      + 'profile is measured to lose on this backend.';
+  $('engnote').textContent =
+    (active && active.stale
+      ? 'This build is older than the pinned one, so the figures below were '
+        + 'not measured on it.'
+      : 'CUDA decodes about 1.6\u00d7 Vulkan on the dense 27B and costs about '
+        + 'a seventh of the window; the context figures below are recomputed '
+        + 'for whichever is selected.')
+    + extra
+    + ' A running model keeps its own engine until you restart it.';
+}
+
 async function refresh(){
   let s;
   try { s = await (await fetch('/api/status')).json(); }
@@ -291,6 +343,8 @@ async function refresh(){
   // arrive: no room on the card, or no room on the disk to put it.
   $('disk').textContent = s.disk ? `${s.disk.free_gb} GB free` : '';
   $('disk').title = s.models_dir || '';
+
+  renderEngines(s);
 
   const rows = mergedRows(s);
   // What the running model was actually started with, from its own row. An
@@ -348,6 +402,13 @@ async function refresh(){
 }
 
 async function post(url){ try { await fetch(url, {method:'POST'}); } catch {} refresh(); }
+async function pickEngine(id){
+  // '' is the managed install, which `engines.select` takes as "clear the
+  // stored choice" rather than as a directory name.
+  const q = id ? '?engine_id=' + encodeURIComponent(id) : '';
+  post('/api/engine/select' + q);   // post() refreshes
+}
+
 $('stop').onclick = () => { $('stop').disabled = true; post('/api/stop'); };
 // Emptied here as well as on the server: the pane is cleared now rather than
 // on whichever poll the rotated event arrives on.
