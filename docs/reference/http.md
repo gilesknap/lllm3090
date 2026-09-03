@@ -31,5 +31,9 @@ Also available: `/health`, `/v1/models`, `/v1/completions`, `/v1/embeddings`,
 `/props`, `/slots`, `/metrics`. Full documentation lives with
 [llama.cpp](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md).
 
-The engine is started with a `q8_0` KV cache and flash attention on; see
-[](../explanations/what-fits.md) for why.
+The engine is started with a `q8_0` KV cache and flash attention on, and where
+the build is new enough, the draft model's own cache is quantised to `q8_0` too
+— llama.cpp holds that one at `f16` by default and does not inherit the main
+setting. See [](../explanations/what-fits.md) for why. `/api/status` reports all
+three under `engines.fixed`, so the page states them once rather than on every
+row.

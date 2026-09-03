@@ -10,6 +10,50 @@ change is only visible in the source it does not need a line here.
 
 ## [Unreleased]
 
+### Added
+
+- **Both front ends now say which models speculate.** The engine turns
+  multi-token prediction on by itself, reading the checkpoint's own header, and
+  no surface anywhere said so — which made the `-MTP` suffix on one repo name
+  look like a capability flag, as though the feature needed different weights.
+  It does not: `Qwen3.8-27B`'s shipped checkpoint carries the head. The panel
+  puts an `MTP` badge on the row and `lllm3090 models` puts `+mtp` in the
+  `KIND` column, read from the file where the model is downloaded and from the
+  catalogue where it is not — the same order the engine decides in.
+
+  Where those two disagree, the row says so instead of picking one. Nothing had
+  ever checked, and a disagreement changes both what runs and how much context
+  it leaves: a declared head that is absent means no speculation and a window
+  priced for a cache that is never allocated; an undeclared head that is
+  present means the opposite, and a window that under-prices the draft cache.
+  All nine catalogued checkpoints agree today.
+
+  The panel also gained a `TEMPLATE` badge, which marks a model started with a
+  replacement chat template. That was already in the API and had never been
+  drawn.
+- **What every model is started with is stated once.** Flash attention on, KV
+  cache `q8_0`, and — the one nothing has ever mentioned — the draft model's
+  own cache at `q8_0`, which llama.cpp holds at `f16` by default and does not
+  inherit from the main setting. Quantising it gave back 2.45 of the 4.80
+  KiB/token that multi-token prediction costs on the dense 27B, and until now
+  that was invisible.
+
+### Changed
+
+- **The speed column is captioned instead of every row being annotated.**
+  Whether the catalogue's figures describe your machine depends on the card and
+  the backend, and on neither of them the model — so one identical parenthesis
+  was being printed after all nine speeds. On a CUDA engine that made every row
+  in the panel three lines tall. What stays on the row is the part that does
+  vary: a figure nobody has measured now says `(estimated)`, which it never did.
+- **A checkpoint's header is read about 4.6x faster, and each file at most
+  once.** Reading all nine took 2.95 seconds, almost all of it walking a
+  tokenizer vocabulary of 777,775 strings; it is now 0.64, and a file already
+  read is not read again unless its size or timestamp changes. This is what
+  makes the badges above affordable on a page that polls every two seconds.
+  `lllm3090 models` goes from instant to about 1.5 seconds on a full disk,
+  which is the price of the column being true.
+
 ### Fixed
 
 - **An engine that could not be asked is no longer confused with a CPU one.**

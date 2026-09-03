@@ -83,15 +83,21 @@
   .rhead .c-name{display:flex;align-items:center;gap:.5rem}
   .rhead .nm{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .rhead .c-size,.rhead .c-ctx{font-size:.78rem;color:var(--ink2);white-space:nowrap}
-  /* The only cell allowed to wrap. A speed measured on another card carries the
-     words that say so, and "(other card)" does not fit beside the figure in six
-     rem -- so it goes onto a second line rather than over its neighbour or, far
-     worse, off the end as a bare number. */
+  /* Allowed to wrap. It no longer usually needs to -- the card-and-backend
+     qualifier moved to the column header, where one copy replaced nine -- but
+     "speed not measured" still does not fit beside nothing in six rem. */
   .rhead .c-speed{font-size:.78rem;color:var(--ink2);line-height:1.25}
   .rhead .c-act{display:flex;align-items:center;justify-content:flex-end}
   .tag{font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;padding:.1rem .35rem;
        border-radius:3px;border:1px solid var(--rule);color:var(--ink2);white-space:nowrap}
   .tag.vis{background:var(--rule)}
+  /* MTP is the one badge that changes what the engine does rather than what
+     the model is, so it is the one that is coloured. */
+  .tag.mtp{background:var(--okbg);border-color:var(--ok);color:var(--ok)}
+  /* A checkpoint whose file disagrees with the catalogue. Neither side is
+     picked, so the badge says "look" rather than stating an answer. */
+  .tag.warn{background:var(--warnbg);border-color:var(--warn);color:var(--warn)}
+  #engfixed{margin:.55rem .3rem 0}
   .prog{display:flex;align-items:center;gap:.6rem;margin:0 .3rem .5rem}
   .prog .bar{flex:1 1 auto;min-width:0;height:4px;margin:0}
   .prog .k{flex:0 0 auto;font-size:.72rem;white-space:nowrap}
@@ -138,6 +144,7 @@
       <span id="engbtns"></span>
       <span class="note" id="engnote"></span>
     </div>
+    <p class="note" id="engfixed"></p>
     <div class="cols">
       <span class="c-name">model</span>
       <span class="c-size">size</span>
@@ -168,11 +175,46 @@ function speedLabel(c){
   // No figure at all is the honest state for an entry nobody has benched yet.
   // Rendering it as "~null tok/s" would read as a broken panel.
   if (c.expected_tok_s == null) return 'speed not measured';
-  // Why a figure does not describe this machine is decided once, in
-  // catalog.speed_qualifier: the card and the backend are two independent
-  // reasons and "other card" is a lie about the second one.
-  if (!c.verified || c.speed_applies) return `~${c.expected_tok_s} tok/s`;
-  return `~${c.expected_tok_s} tok/s (${c.speed_note || 'other card'})`;
+  // The card-and-backend qualifier is not here any more. It comes from
+  // catalog.speed_qualifier, which takes no model, so every row was being
+  // handed the same string -- nine copies of one fact, and on a CUDA engine
+  // nine rows three lines tall. It is in the column header now.
+  //
+  // What stays is the one part that does vary per row: whether anyone has
+  // actually run this model. An unverified figure under a header saying
+  // "measured" would be the header lying on its behalf.
+  return c.verified ? `~${c.expected_tok_s} tok/s`
+                    : `~${c.expected_tok_s} tok/s (estimated)`;
+}
+
+function engineNote(s, rows){
+  // Everything true of every row, in one sentence above them instead of nine
+  // copies inside them.
+  //
+  // The speed qualifier is here rather than in the column header, which is
+  // where the CLI puts it: catalog.speed_qualifier can return "other card,
+  // measured on vulkan", and six rem of uppercase column header is thirteen
+  // characters. The header is the right *idea* -- one caption, not nine
+  // suffixes -- and this is the widest thing above the column.
+  const parts = [];
+  const f = s.engines && s.engines.fixed;
+  if (f){
+    const flags = [];
+    if (f.flash_attention) flags.push('flash attention on');
+    if (f.cache_type) flags.push('KV cache ' + f.cache_type);
+    // The draft cache is the one worth stating: quantising it gave back 2.45
+    // of the 4.80 KiB/token that MTP costs on the dense 27B, and no surface
+    // has ever said it happened.
+    flags.push(f.draft_cache_type ? 'draft cache ' + f.draft_cache_type
+                                  : 'draft cache f16 (this engine is too old '
+                                    + 'for the flag)');
+    parts.push('Every model starts with ' + flags.join(' · ') + '.');
+  }
+  const c = rows[0];
+  if (c && c.expected_tok_s != null && !c.speed_applies && c.speed_note){
+    parts.push('Decode figures below were ' + c.speed_note + '.');
+  }
+  return parts.join(' ');
 }
 function fmtCtx(n){ return n >= 1024 ? Math.round(n/1024)+'k' : n; }
 function esc(s){ return String(s ?? '').replace(/[&<>"]/g, ch =>
@@ -244,6 +286,9 @@ function rowHtml(c, groupLabel){
         <span class="nm">${esc(c.name)}</span>
         <span class="tag">${esc(c.kind)}</span>
         ${c.vision ? '<span class="tag vis">vision</span>' : ''}
+        ${c.mtp ? `<span class="tag ${c.mtp_note ? 'warn' : 'mtp'}">mtp</span>` : ''}
+        ${c.mtp_note && !c.mtp ? '<span class="tag warn">no mtp</span>' : ''}
+        ${c.chat_template ? '<span class="tag">template</span>' : ''}
       </span>
       <span class="c-size">${c.gb} GB</span>
       <span class="c-ctx">${ctx}</span>
@@ -251,6 +296,7 @@ function rowHtml(c, groupLabel){
       <span class="c-act">${actionHtml(c)}</span>
     </div>
     ${c.status_note ? `<p class="why">${esc(c.status_note)}</p>` : ''}
+    ${c.mtp_note ? `<p class="why">${esc(c.mtp_note)}</p>` : ''}
     ${c.download ? `<div class="prog">
       <div class="bar"><i id="pb-${esc(rowKey(c))}" style="width:0"></i></div>
       <span class="k" id="pt-${esc(rowKey(c))}"></span>
@@ -347,6 +393,9 @@ async function refresh(){
   renderEngines(s);
 
   const rows = mergedRows(s);
+  // Two things that are true of every row, said once above them rather than
+  // nine times inside them.
+  $('engfixed').textContent = engineNote(s, rows);
   // What the running model was actually started with, from its own row. An
   // uncatalogued one has nothing to say here, and says nothing.
   const run = rows.find(c => c.running);
@@ -378,6 +427,9 @@ async function refresh(){
   const shape = JSON.stringify(rows.map((c, i) => [
     rowKey(c), groups[i], c.onDisk, c.running, c.fits, !!c.download, c.failed,
     expandedId === rowKey(c), c.max_ctx, c.parallel, c.gb,
+    // A checkpoint that finishes downloading changes its own badges: what it
+    // carries is read from the file, and before it arrives there is no file.
+    c.mtp, c.mtp_note,
   ]));
   if ($('rows').dataset.shape !== shape){
     $('rows').innerHTML = rows.map((c, i) => rowHtml(c, groups[i])).join('');
