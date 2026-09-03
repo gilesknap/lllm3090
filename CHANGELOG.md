@@ -103,6 +103,15 @@ change is only visible in the source it does not need a line here.
 
 ### Added
 
+- **The landscape comparison answers the sharper question.** "Why not plain
+  `llama.cpp`, with an assistant to choose the flags?" is a better objection
+  than "why not Ollama", because `llama-server` *is* the engine here and
+  nothing is silently truncated behind a `--ctx-size` you set yourself. The
+  answer is now written down beside the others: what an assistant cannot derive
+  without the checkpoint's own header, which constants are residue from engines
+  that would not start, why a speculation flag's verdict inverts between CUDA
+  and Vulkan, and why a speed cannot be chosen at all.
+
 - **The panel picks the backend.** A machine can carry a Vulkan engine and a
   compiled CUDA one at the same time, and until now the only way to say which
   served was `LLLM3090_LLAMA_DIR` — an environment variable, which reaches a
