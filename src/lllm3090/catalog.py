@@ -17,7 +17,7 @@ from typing import Any
 
 import yaml
 
-from . import config, engines, hardware
+from . import config, engines, gguf, hardware
 
 #: Bytes per KiB/MiB, spelled out so the arithmetic below reads unambiguously.
 MIB = 1024 * 1024
@@ -661,6 +661,49 @@ def speed_qualifier(
     return False, f"other card, measured on {config.REFERENCE_BACKEND}"
 
 
+def mtp_state(model: Model, path: str | None) -> tuple[bool, str]:
+    """Whether this row gets a multi-token prediction head, and any caveat.
+
+    Returns ``(mtp, note)``. ``mtp`` is deliberately **not** ``Model.mtp``: it
+    is the answer to the question a reader is actually asking, which is what
+    happens if Start is pressed now. For a checkpoint on the disk that is
+    decided by the file, because the file is what ``engine.start`` reads; for
+    one that has not been downloaded there is nothing to read and the
+    catalogue's declaration is the best available answer.
+
+    ``note`` is empty unless the two disagree, and both directions matter:
+
+    * **Declared but absent.** It starts without speculation, and its context
+      figures were priced for a second KV cache it will not allocate -- so the
+      window shown is smaller than the one it will get.
+    * **Present but undeclared.** It starts *with* speculation, and the figures
+      under-price the draft cache -- so the window shown is one the card may
+      not hold.
+
+    Nothing here picks a winner between the two sources. A disagreement is a
+    fact about a checkpoint that is not what the catalogue thinks it is, and
+    quietly preferring either one would hide it. Verified against all nine
+    installed checkpoints on 2026-09-03: they agree, which is why this path
+    has a synthetic test rather than a real one.
+    """
+    if path is None:
+        return model.mtp, ""
+    present = gguf.has_mtp(path)
+    if present == model.mtp:
+        return present, ""
+    if model.mtp:
+        return False, (
+            "the catalogue expects a multi-token prediction head and this file "
+            "has none: it will start without speculation, and the window above "
+            "is priced for a second cache it will not allocate"
+        )
+    return True, (
+        "this file carries a multi-token prediction head the catalogue does "
+        "not declare: it will start with speculation, and the window above "
+        "does not price the draft cache it needs"
+    )
+
+
 def catalog_for_panel(desktop: bool | None = None) -> list[dict[str, Any]]:
     """Catalogue entries decorated with fit, plan and installed-state, for the UI.
 
@@ -669,7 +712,9 @@ def catalog_for_panel(desktop: bool | None = None) -> list[dict[str, Any]]:
     speeds are never scaled to it, because a bandwidth ratio produces a guess
     and the UI would show it in the same typeface as a measurement.
     """
-    have = {m["name"] for m in installed()}
+    # Keyed by name rather than a set of them: the row needs the path, because
+    # what a downloaded checkpoint actually carries is read from the file.
+    have = {m["name"]: m for m in installed()}
     profile = hardware.detect()
     backend = engines.backend()
     speed_applies, speed_note = speed_qualifier(profile, backend)
@@ -677,6 +722,8 @@ def catalog_for_panel(desktop: bool | None = None) -> list[dict[str, Any]]:
         desktop = hardware.graphical()
     rows = []
     for m in load_catalog():
+        on_disk = have.get(m.name)
+        mtp, mtp_note = mtp_state(m, on_disk["path"] if on_disk else None)
         f = fit(m, desktop, profile, backend)
         p = plan(m, desktop=desktop, profile=profile, backend=backend)
         state, why = status(m, p, f, profile)
@@ -711,6 +758,13 @@ def catalog_for_panel(desktop: bool | None = None) -> list[dict[str, Any]]:
                 "tags": m.tags,
                 "expected_tok_s": m.expected_tok_s,
                 "chat_template": m.chat_template,
+                # What this row gets if Start is pressed now -- the file where
+                # there is one, the declaration where there is not.
+                "mtp": mtp,
+                # What models.yaml says, which is what fit and plan priced.
+                "mtp_declared": m.mtp,
+                # Empty unless those two disagree. See mtp_state.
+                "mtp_note": mtp_note,
                 "mmproj": m.mmproj,
                 "vision": m.vision,
                 "fits": f.fits,
@@ -720,7 +774,7 @@ def catalog_for_panel(desktop: bool | None = None) -> list[dict[str, Any]]:
                 "pool": p.pool,
                 "plan": p.summary,
                 "headline": p.summary,
-                "installed": m.name in have,
+                "installed": on_disk is not None,
             }
         )
     return rows

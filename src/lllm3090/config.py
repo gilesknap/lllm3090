@@ -243,3 +243,35 @@ ENGINE_CHOICE = STATE_DIR / "engine.json"
 #: know the difference to say *why* the switch is unavailable rather than
 #: showing a control that silently does nothing.
 LLAMA_DIR_FROM_ENV = "LLLM3090_LLAMA_DIR" in os.environ
+
+# ---------------------------------------------------------------------------
+# Documentation
+# ---------------------------------------------------------------------------
+
+#: Where the published documentation lives.
+#:
+#: The panel is loopback-only and these links are not, so on a machine with no
+#: route out they fail as a browser error page rather than as anything the
+#: panel has to handle. That is the right trade: the alternative is a badge
+#: that names a concept and offers no way to find out what it means.
+DOCS_URL = "https://gilesknap.github.io/lllm3090"
+
+#: Where each badge on a model row goes when clicked.
+#:
+#: Here rather than in the page because a heading anchor is generated from the
+#: heading *text*: rewording "Where guesses come from" silently breaks the link
+#: and nothing in a browser would say so. Held in Python, it can be -- and is
+#: -- checked against the documentation source by the test suite, so the
+#: rewording fails CI instead of shipping.
+#:
+#: Keyed by the badge's own label, which is what the row renders, so a badge
+#: with no entry is simply not a link. ``vision`` has no page of its own; the
+#: field table is where ``mmproj`` is defined and is the honest destination
+#: rather than an invented one.
+BADGE_DOCS = {
+    "dense": "explanations/dense-vs-moe",
+    "moe": "explanations/dense-vs-moe",
+    "vision": "reference/catalogue#fields",
+    "mtp": "explanations/what-makes-it-fast#where-guesses-come-from",
+    "template": "how-to/claude-code#a-patched-chat-template-only-for-qwen3-8-27b",
+}

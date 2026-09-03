@@ -19,6 +19,7 @@ import urllib.error
 import urllib.request
 from importlib import resources
 from pathlib import Path
+from typing import Any
 
 from . import config, engines, gguf, speculation
 
@@ -98,7 +99,7 @@ def server_binary() -> Path:
 #: Keyed on modification time as well as path, because ``install-engine
 #: --force`` replaces the binary underneath a panel that has been running for
 #: days, and an answer cached from the old one would outlive it.
-_SUPPORTS: dict[tuple[str, float, str], bool] = {}
+_SUPPORTS: dict[tuple[str, float], str] = {}
 
 
 def supports(flag: str) -> bool:
@@ -112,11 +113,13 @@ def supports(flag: str) -> bool:
 
     Passing an unknown flag is not a soft failure -- llama-server exits, and
     the panel reports "starting" over a process that is already gone. Asking
-    first costs one ``--help`` per binary per process.
+    first costs one ``--help`` per binary per process: the *text* is what is
+    remembered, not the answer, because the key used to include the flag and a
+    start asking about five of them spawned five processes to read one page.
     """
     binary = server_binary()
     try:
-        key = (str(binary), binary.stat().st_mtime, flag)
+        key = (str(binary), binary.stat().st_mtime)
     except OSError:
         return False
     if key not in _SUPPORTS:
@@ -126,12 +129,12 @@ def supports(flag: str) -> bool:
                 capture_output=True, text=True, timeout=30, check=False,
                 env=dict(os.environ, LD_LIBRARY_PATH=str(server_binary().parent)),
             )
-            _SUPPORTS[key] = flag in (out.stdout + out.stderr)
+            _SUPPORTS[key] = out.stdout + out.stderr
         except Exception:
             # Unable to ask is not permission to assume. The flag is an
             # optimisation; the start is not.
-            _SUPPORTS[key] = False
-    return _SUPPORTS[key]
+            _SUPPORTS[key] = ""
+    return flag in _SUPPORTS[key]
 
 
 #: What every KV cache this engine allocates is quantised to.
@@ -148,6 +151,32 @@ def supports(flag: str) -> bool:
 #: is what makes long context affordable on 24 GB. q4_0 would halve it again
 #: but degrades long-context reasoning, so it is deliberately not offered.
 CACHE_TYPE = "q8_0"
+
+
+def fixed_flags() -> dict[str, Any]:
+    """What every model is started with, whichever model it is.
+
+    Three settings are identical for all nine catalogue entries and are not
+    visible anywhere: flash attention, the main KV cache quantisation, and the
+    draft model's own cache. The third is the one worth stating -- quantising
+    it gave back 2.45 of the 4.80 KiB/token that MTP costs on the dense 27B,
+    which is most of a percent of the card, and until now nothing said it had
+    happened.
+
+    Stated here rather than on each row precisely because it does not vary. A
+    fact repeated nine times reads as nine facts, and the reader has to compare
+    them to discover it is one.
+
+    ``draft_cache_type`` is ``None`` on a binary too old for the flag, because
+    then it is not what happens: the draft cache stays at llama.cpp's f16
+    default and the window costs what it used to.
+    """
+    drafted = supports("--spec-draft-type-k") and supports("--spec-draft-type-v")
+    return {
+        "flash_attention": True,
+        "cache_type": CACHE_TYPE,
+        "draft_cache_type": CACHE_TYPE if drafted else None,
+    }
 
 
 def spec_flags(profile: speculation.Profile, model_path: str) -> list[str]:

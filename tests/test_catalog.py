@@ -807,7 +807,7 @@ def test_a_cpu_engine_is_an_objection_even_on_the_measured_card():
 
 
 def test_every_row_carries_the_backend_and_what_to_say_about_it(monkeypatch):
-    """Three front ends render this column and they must not each invent the
+    """Both front ends render this column and they must not each invent the
     wording, which is how a promise gets made in one place and withdrawn in
     another."""
     monkeypatch.setattr(catalog.engines, "backend", lambda directory=None: "cuda")
@@ -826,3 +826,82 @@ def test_the_dense_27b_is_no_longer_quoted_at_its_pre_mtp_speed():
     about which configuration it is describing."""
     dense = next(m for m in catalog.load_catalog() if m.name == "Qwen3.8-27B")
     assert dense.expected_tok_s == 55
+
+
+# ---------------------------------------------------------------------------
+# What a row actually gets, as opposed to what models.yaml declares
+# ---------------------------------------------------------------------------
+
+
+def _dense():
+    return next(m for m in catalog.load_catalog() if m.name == "Qwen3.8-27B")
+
+
+def test_a_model_not_yet_downloaded_answers_from_the_catalogue():
+    """There is no file to read, and refusing to answer would leave the one
+    field a reader is asking about blank on every row they have not fetched."""
+    mtp, note = catalog.mtp_state(_dense(), None)
+    assert mtp is True
+    assert note == ""
+
+
+def test_a_downloaded_model_answers_from_the_file(monkeypatch):
+    """`engine.start` reads the file, so the file is what the row is about.
+    A declaration cannot make llama.cpp accept --spec-type draft-mtp."""
+    monkeypatch.setattr(catalog.gguf, "has_mtp", lambda path: True)
+    assert catalog.mtp_state(_dense(), "/models/x.gguf") == (True, "")
+
+
+def test_a_declared_head_the_file_does_not_carry_is_said_out_loud(monkeypatch):
+    """A quantiser strips the head and the repo name still says MTP. Nothing
+    checks today, which is exactly why it is worth a row that says so: the
+    model starts without speculation and its window was priced for a second
+    cache it never allocates."""
+    monkeypatch.setattr(catalog.gguf, "has_mtp", lambda path: False)
+    mtp, note = catalog.mtp_state(_dense(), "/models/x.gguf")
+    assert mtp is False
+    assert "will start without speculation" in note
+
+
+def test_an_undeclared_head_the_file_does_carry_is_said_too(monkeypatch):
+    """The other direction, and it is the one that costs memory rather than
+    speed: it starts *with* speculation, and the window above does not price
+    the draft cache it needs."""
+    plain = catalog.Model(**{**vars(_dense()), "mtp": False})
+    monkeypatch.setattr(catalog.gguf, "has_mtp", lambda path: True)
+    mtp, note = catalog.mtp_state(plain, "/models/x.gguf")
+    assert mtp is True
+    assert "does not price the draft cache" in note
+
+
+def test_the_panel_is_told_which_models_speculate(monkeypatch):
+    """The question that started this: nothing anywhere said whether the
+    engine had turned multi-token prediction on, and it decides that itself
+    from the GGUF header."""
+    rows = catalog.catalog_for_panel(desktop=True)
+    speculating = {r["name"] for r in rows if r["mtp"]}
+    assert speculating == {"Qwen3.8-27B", "Qwen3.6-35B-A3B-MTP"}
+    for row in rows:
+        # Nothing is downloaded under the test fixture's models dir, so every
+        # row is answering from its declaration and none can disagree.
+        assert row["mtp"] == row["mtp_declared"]
+        assert row["mtp_note"] == ""
+
+
+def test_the_declared_flag_is_kept_beside_the_real_one(monkeypatch):
+    """`fit` and `plan` priced the window from the declaration, so a row that
+    showed only the file's answer would leave the numbers beside it
+    unexplained."""
+    monkeypatch.setattr(
+        catalog, "installed",
+        lambda models_dir=None: [
+            {"name": "Qwen3.8-27B", "path": "/models/q/x.gguf",
+             "mmproj": None, "gb": 15.4}
+        ],
+    )
+    monkeypatch.setattr(catalog.gguf, "has_mtp", lambda path: False)
+    row = next(r for r in catalog.catalog_for_panel(desktop=True)
+               if r["name"] == "Qwen3.8-27B")
+    assert row["mtp"] is False, "what it will actually start with"
+    assert row["mtp_declared"] is True, "what the window above was priced for"
+    assert row["mtp_note"]

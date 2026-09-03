@@ -8,6 +8,7 @@ and simply cannot see.
 from __future__ import annotations
 
 import inspect
+import subprocess
 
 import pytest
 
@@ -302,3 +303,53 @@ def test_a_level_the_template_accepts_starts_normally(fake_engine, monkeypatch):
     ok, detail = engine.start(str(model), "M", 4096, 2, 300, None, None, effort="low")
     assert ok
     assert "effort low" in detail, "the level is worth seeing in the ready line"
+
+
+# --- what every model is started with, whichever model it is -----------------
+
+
+def test_the_settings_that_do_not_vary_are_reported_as_they_are_passed(fake_engine):
+    """`fixed_flags` and the launch have to agree, because the whole point of
+    the first is to tell a reader what the second will do. Asserted against
+    the argv rather than against a second copy of the constants."""
+    seen, model, _ = fake_engine
+    fixed = engine.fixed_flags()
+    ok, _ = engine.start(str(model), "M", 4096, 2, 0)
+    assert ok
+    argv = seen[0]
+    assert fixed["flash_attention"] is (argv[argv.index("-fa") + 1] == "on")
+    assert fixed["cache_type"] == argv[argv.index("--cache-type-k") + 1]
+    assert fixed["cache_type"] == argv[argv.index("--cache-type-v") + 1]
+
+
+def test_an_engine_too_old_for_the_draft_cache_says_f16_rather_than_q8(
+    fake_engine, monkeypatch
+):
+    """Reporting the flag this project would like to pass, on a binary that
+    will reject it, describes a window the card is not going to give back."""
+    monkeypatch.setattr(
+        engine, "supports", lambda flag: not flag.startswith("--spec-draft-type")
+    )
+    assert engine.fixed_flags()["draft_cache_type"] is None
+
+
+def test_the_binary_is_asked_what_it_supports_once(tmp_path, monkeypatch):
+    """It used to be once per flag. A start asks about five, so reading one
+    page of --help spawned five processes -- and `lllm3090 models` now asks
+    too, where the cost is in front of a command that used to be instant."""
+    llama = tmp_path / "llama.cpp"
+    llama.mkdir()
+    (llama / "llama-server").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(config, "LLAMA_DIR", llama)
+    engine._SUPPORTS.clear()
+    runs = []
+
+    def fake_run(argv, **kw):
+        runs.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "--spec-type --cache-type-k", "")
+
+    monkeypatch.setattr(engine.subprocess, "run", fake_run)
+    assert engine.supports("--spec-type") is True
+    assert engine.supports("--cache-type-k") is True
+    assert engine.supports("--not-a-flag-any-build-has") is False
+    assert len(runs) == 1

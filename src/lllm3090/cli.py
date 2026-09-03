@@ -275,10 +275,27 @@ def models() -> None:
             "unchanged rather than scaled: a ratio would be a guess printed in "
             "the same\ntypeface as a measurement. Expect them to understate."
         )
+    # What every model is started with, whichever one is started. Said here
+    # because it does not vary: on a row it would be nine copies of one fact,
+    # and the reader would have to compare them to find that out.
+    fixed = engine.fixed_flags()
+    draft = (
+        f"draft cache {fixed['draft_cache_type']}"
+        if fixed["draft_cache_type"]
+        else "draft cache f16 (this engine is too old for the flag)"
+    )
+    typer.echo(
+        f"Every model starts with flash attention on, KV cache "
+        f"{fixed['cache_type']}, {draft}."
+    )
     typer.echo("")
+    # The qualifier belongs on the column, not on each row. speed_qualifier is
+    # given a card and a backend and no model, so it cannot vary between them:
+    # it was the same parenthesis printed nine times.
+    qualifier = rows[0]["speed_note"] if rows else "decoding"
     header = (
-        f"{'MODEL':<24}{'SIZE':>8}{'KIND':>10}{'CONTEXT':>12}  {'STATE':<16}"
-        f"SPEED ({config.REFERENCE_BACKEND}, decoding)"
+        f"{'MODEL':<24}{'SIZE':>8}{'KIND':>14}{'CONTEXT':>12}  {'STATE':<16}"
+        f"SPEED (decoding, {qualifier})"
     )
     typer.echo(header)
     cautions: list[str] = []
@@ -299,12 +316,22 @@ def models() -> None:
         if row["status_note"]:
             cautions.append(f"  {row['name']}: {row['status_note']}")
         speed = f"~{row['expected_tok_s']} tok/s" if row["expected_tok_s"] else "-"
-        if row["verified"]:
-            speed += f" ({row['speed_note']})"
+        # The one part of the qualifier that is genuinely per-row: whether
+        # anyone has run this model at all. Left on the row, because a heading
+        # saying "measured" would otherwise be speaking for a figure nobody
+        # measured.
+        if row["expected_tok_s"] and not row["verified"]:
+            speed += " (estimated)"
         ctx = (
             f"{row['max_ctx'] // 1024}k x{row['parallel']}" if row["fits"] else "-"
         )
-        kind = row["kind"] + ("+vis" if row["vision"] else "")
+        # The original question this answers: the engine turns multi-token
+        # prediction on by itself, from the GGUF header, and until now no
+        # surface anywhere said so.
+        kind = (row["kind"] + ("+vis" if row["vision"] else "")
+                + ("+mtp" if row["mtp"] else ""))
+        if row["mtp_note"]:
+            cautions.append(f"  {row['name']}: {row['mtp_note']}")
         typer.echo(
             f"{row['name']:<24}{row['gb']:>7.1f}G{kind:>10}{ctx:>12}  "
             f"{state:<16}{speed}"

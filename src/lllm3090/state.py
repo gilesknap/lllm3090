@@ -16,7 +16,16 @@ import shutil
 import subprocess
 from typing import Any
 
-from . import catalog, config, downloads, engine, engines, hardware, speculation
+from . import (
+    catalog,
+    config,
+    downloads,
+    engine,
+    engines,
+    gguf,
+    hardware,
+    speculation,
+)
 from ._version import __version__
 
 
@@ -84,7 +93,12 @@ def installed_models() -> list[dict[str, Any]]:
         plan = catalog.launch_plan(m["name"])
         rows.append(
             {**m, "kind": "gguf", "fits": True,
-             "max_ctx": plan.per_session, "parallel": plan.parallel}
+             "max_ctx": plan.per_session, "parallel": plan.parallel,
+             # The same question the catalogue rows answer, and for an
+             # uncatalogued checkpoint the file is the only source there is.
+             # There is nothing to disagree with, so there is no note.
+             "mtp": gguf.has_mtp(m["path"]), "mtp_declared": None,
+             "mtp_note": ""}
         )
     return rows
 
@@ -108,6 +122,9 @@ def engine_choices() -> dict[str, Any]:
         "locked": config.LLAMA_DIR_FROM_ENV,
         "active": active.name,
         "active_backend": engines.backend(active),
+        # What the chosen engine does to every model alike. Beside the choice
+        # rather than on each row: nine copies of one fact read as nine facts.
+        "fixed": engine.fixed_flags(),
         "options": [
             {
                 "id": c.id,
@@ -153,5 +170,9 @@ def snapshot() -> dict[str, Any]:
         "catalog": catalog.catalog_for_panel(),
         "downloads": downloads.all_downloads(),
         "models_dir": str(config.MODELS_DIR),
+        # Where each badge on a row goes when clicked. Sent rather than written
+        # into the page so that one map is both what the browser follows and
+        # what the test suite checks against the documentation source.
+        "docs": {"base": config.DOCS_URL, "badges": config.BADGE_DOCS},
         "engines": engine_choices(),
     }

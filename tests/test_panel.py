@@ -15,6 +15,7 @@ here would not be the lock the handler sees; what matters is the branch, and
 from __future__ import annotations
 
 import asyncio
+import struct
 from typing import Self
 
 import pytest
@@ -428,3 +429,48 @@ def test_status_says_which_profiles_each_backend_allows(engine_choice):
     by_backend = {o["backend"]: o["profiles"] for o in options}
     assert by_backend["vulkan"] == ["default"]
     assert "copy" in by_backend["cuda"]
+
+
+# --- what the page is told about speculation and cache ------------------------
+
+
+def test_an_uncatalogued_checkpoint_says_whether_it_speculates(client, tmp_path):
+    """The catalogue's rows answer this from models.yaml where the file is
+    absent; a hand-placed checkpoint has no declaration, so the file is the
+    only source there is -- and the panel draws one merged list, so a row that
+    left the badge off would be saying "no head" rather than "no answer"."""
+    d = tmp_path / "models" / "Homemade-3B"
+    d.mkdir(parents=True)
+    name = b"blk.40.nextn.enorm.weight"
+    (d / "m.gguf").write_bytes(
+        b"GGUF" + struct.pack("<I", 3)      # magic and format version
+        + struct.pack("<QQ", 1, 0)          # one tensor, no metadata
+        + struct.pack("<Q", len(name)) + name
+        + struct.pack("<I", 1) + struct.pack("<Q", 8)   # one dimension, of 8
+        + struct.pack("<I", 0) + struct.pack("<Q", 0)   # ggml type, offset
+    )
+    row = next(m for m in client.get("/api/status").json()["installed"]
+               if m["name"] == "Homemade-3B")
+    assert row["mtp"] is True
+    assert row["mtp_declared"] is None, "there is no catalogue entry to declare it"
+
+
+def test_the_page_is_told_what_every_model_is_started_with(client):
+    """Flash attention, the main KV cache and the draft model's own cache are
+    identical for every entry, so they belong beside the engine rather than
+    repeated on nine rows."""
+    fixed = client.get("/api/status").json()["engines"]["fixed"]
+    assert fixed["flash_attention"] is True
+    assert fixed["cache_type"] == engine.CACHE_TYPE
+    # No engine is installed under the test fixture, so the probe cannot say
+    # the flag is there -- and reporting q8_0 anyway would describe memory the
+    # card is not going to give back.
+    assert fixed["draft_cache_type"] is None
+
+
+def test_the_page_is_told_where_each_badge_goes(client):
+    """The map is sent rather than written into the page, so that what the
+    browser follows and what `test_doc_links.py` checks are one thing."""
+    docs = client.get("/api/status").json()["docs"]
+    assert docs["base"].startswith("https://")
+    assert docs["badges"]["mtp"].startswith("explanations/what-makes-it-fast#")

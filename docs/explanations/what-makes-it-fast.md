@@ -68,6 +68,14 @@ it is guessing for. When a checkpoint has one, this project turns it on
 automatically — it reads the file to check rather than trusting a label, because
 passing the flag to a model without the head makes the engine refuse to start.
 
+Both front ends say which models those are: an `MTP` badge on the row in the
+panel, `+mtp` in the `KIND` column of `lllm3090 models`. Read from the file
+where the model is downloaded and from the catalogue where it is not, which is
+the same order the engine decides in. Where the two disagree — a quantiser that
+stripped the head, a repo whose name says MTP and whose weights do not — the
+row says so rather than picking one, because the disagreement changes both what
+runs and how much context it leaves.
+
 **A separate small model (a "draft model").** Run a much smaller model of the
 same family to produce guesses, and let the big one check them. This works, but
 you now hold two models in memory, and the small one's memory is memory the big
