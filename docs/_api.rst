@@ -19,5 +19,4 @@ API reference
    lllm3090.preflight
    lllm3090.state
    lllm3090.panel
-   lllm3090.tui
    lllm3090.cli

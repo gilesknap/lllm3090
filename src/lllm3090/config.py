@@ -29,8 +29,6 @@ ENGINES_DIR = _path(
 ENGINE_PORT = int(os.environ.get("LLLM3090_ENGINE_PORT", "1919"))
 PANEL_PORT = int(os.environ.get("LLLM3090_PANEL_PORT", "8080"))
 ENGINE_URL = f"http://127.0.0.1:{ENGINE_PORT}"
-#: Where a front end that is not a browser goes looking for the panel.
-PANEL_URL = f"http://127.0.0.1:{PANEL_PORT}"
 
 ENGINE_LOG = STATE_DIR / "engine.log"
 ENGINE_PID = STATE_DIR / "engine.pid"

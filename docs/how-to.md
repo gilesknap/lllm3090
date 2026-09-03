@@ -7,7 +7,6 @@ how-to/claude-code
 how-to/context-and-slots
 how-to/other-harnesses
 how-to/headless
-how-to/terminal-ui
 how-to/remote-access
 how-to/own-gguf
 how-to/find-models

@@ -83,9 +83,9 @@ in the `/v1/messages` body, and llama.cpp does not implement that field.
 Unknown fields are dropped rather than refused: a request carrying
 `output_config.effort` returns 200, exactly as one carrying an invented field
 does. Because there is no 400, Claude Code never learns the level went nowhere
-— it only latches "unsupported" on a rejection — so the TUI goes on reporting
-an effort that never left the client. `CLAUDE_CODE_EFFORT_LEVEL` is the same
-dead end; it only changes what goes into that ignored field.
+— it only latches "unsupported" on a rejection — so its own UI goes on
+reporting an effort that never left the client. `CLAUDE_CODE_EFFORT_LEVEL` is
+the same dead end; it only changes what goes into that ignored field.
 
 The knob does exist, under another name. llama.cpp takes `reasoning_effort` and
 hands it to the chat template — but only on `/v1/chat/completions`. On

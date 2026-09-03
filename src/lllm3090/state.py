@@ -1,13 +1,13 @@
-"""One description of the machine, in one shape, for every front end.
+"""One description of the machine, in one shape, served by ``/api/status``.
 
-The panel serves this over HTTP for a browser; the terminal UI builds the same
-dict in this process when no panel is running. It lives here rather than inside
-the FastAPI handler so that the two cannot drift -- a field the panel gains is
-a field the terminal UI can render without anyone having to remember it.
+It lives here rather than inside the FastAPI handler for two reasons. The shape
+is a documented surface -- see ``docs/reference/http.md`` -- so it is worth a
+module of its own rather than an anonymous dict literal inside a route; and
+assembled here it can be built and asserted on without standing up a client.
 
 Nothing here starts, stops or downloads anything. Every call is a read of the
 catalogue's arithmetic, a pidfile, or ``nvidia-smi``, which is what makes it
-safe to run from a process that is not the panel.
+safe to call from anywhere, including from a process that is not the panel.
 """
 
 from __future__ import annotations
@@ -67,10 +67,10 @@ def disk() -> dict[str, float] | None:
 def installed_models() -> list[dict[str, Any]]:
     """What is on disk, with a stray GGUF carrying the window it would get.
 
-    Both front ends now draw one merged list, so a checkpoint the catalogue has
-    never heard of sits in it beside the curated ones and has to say the same
-    things they do. Its window comes from ``catalog.launch_plan`` -- the
-    same call a start makes -- rather than from each renderer restating
+    The panel draws one merged list, so a checkpoint the catalogue has never
+    heard of sits in it beside the curated ones and has to say the same things
+    they do. Its window comes from ``catalog.launch_plan`` -- the same call a
+    start makes -- rather than from the renderer restating
     ``UNKNOWN_MODEL_CTX`` in its own language, which is how the console and the
     browser would end up describing one model two ways.
     """
@@ -128,11 +128,11 @@ def engine_choices() -> dict[str, Any]:
 
 
 def snapshot() -> dict[str, Any]:
-    """Everything a front end needs to draw the machine, in one call.
+    """Everything the panel needs to draw the machine, in one call.
 
     Deliberately excludes the panel's ``busy`` and ``last``: those describe a
-    server process rather than a machine, and there is nothing honest to say
-    about them when no panel is running.
+    server process rather than a machine, and this is the machine. The route
+    adds them, which is also what keeps this callable from a plain test.
     """
     profile = hardware.detect()
     return {

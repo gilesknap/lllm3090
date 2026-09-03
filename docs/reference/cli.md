@@ -18,7 +18,6 @@ lllm3090 <command> [options]
 | `sweep [--gpu ID] [--limit N] [--yaml] [--skipped]` | Survey published GGUF models and price them against a card |
 | `status` | Whether the engine is running, on what, and whether it answers yet |
 | `panel [--port N]` | Run the control panel in the foreground |
-| `tui [--url U]` | The panel drawn in the terminal, for a console with no browser |
 | `claude [args…]` | Launch Claude Code against the local engine |
 | `claude --print-env` | Print that environment instead of launching it |
 
