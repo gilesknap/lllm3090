@@ -789,8 +789,20 @@ def test_an_engine_that_could_not_be_asked_is_no_objection():
     the planner asks the engine which backend it is. Qualifying every row on
     the strength of a backend that is about to be Vulkan is pure noise -- the
     same rule capability_ok already follows for an unknown capability."""
-    applies, note = catalog.speed_qualifier(_card(True), "cpu")
+    applies, note = catalog.speed_qualifier(_card(True), catalog.engines.UNKNOWN)
     assert applies and note == "measured"
+
+
+def test_a_cpu_engine_is_an_objection_even_on_the_measured_card():
+    """The licence above belongs to `unknown` alone.
+
+    `cpu` says a binary was asked and answered: no accelerator. Every speed in
+    the catalogue is a GPU speed, so an engine that has none cannot produce
+    them whatever card is in the machine -- and while the two shared a value,
+    a CPU-only build had them all labelled "measured"."""
+    applies, note = catalog.speed_qualifier(_card(True), catalog.engines.CPU)
+    assert not applies
+    assert note == "measured on vulkan"
 
 
 def test_every_row_carries_the_backend_and_what_to_say_about_it(monkeypatch):

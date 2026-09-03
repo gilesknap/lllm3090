@@ -15,6 +15,7 @@ import re
 import signal
 import subprocess
 import time
+import urllib.error
 import urllib.request
 from importlib import resources
 from pathlib import Path
@@ -196,6 +197,56 @@ def spec_flags(profile: speculation.Profile, model_path: str) -> list[str]:
             "--spec-draft-type-v", CACHE_TYPE,
         ]
     return flags
+#: Levels ``llama-server --reasoning-effort`` accepts, less ``default`` --
+#: which means "pass nothing", and is spelled here by leaving ``--effort`` off.
+#:
+#: The engine takes the level and hands it to the chat template. What the
+#: *template* does with it is the template's business: Qwen3.8-27B's implements
+#: ``low``, ``medium`` and ``xhigh``, folds ``high`` into ``xhigh``, and raises
+#: on everything else. So this list is what the engine will accept, not what
+#: any given model will render. :func:`template_refuses_effort` is what closes
+#: that gap.
+REASONING_EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "max")
+
+
+def template_refuses_effort(effort: str, timeout: float = 5.0) -> str | None:
+    """The chat template's complaint about ``effort``, or ``None`` if it renders.
+
+    A template that does not implement a level raises while rendering the
+    prompt, which is a 500 on *every* request. The engine starts, loads the
+    weights, and answers ``/health`` regardless -- so without this the start
+    reports success and the failure arrives later, per request, as a Jinja
+    traceback that does not obviously point back at a flag typed minutes ago.
+
+    ``/apply-template`` renders a prompt and generates nothing, so asking costs
+    a round trip. Anything other than a rendering error -- a build without the
+    endpoint, a connection that fails -- returns ``None``: not being able to
+    check is not evidence of a problem.
+    """
+    body = json.dumps({
+        "reasoning_effort": effort,
+        "messages": [{"role": "user", "content": "ping"}],
+    }).encode()
+    req = urllib.request.Request(
+        f"{config.ENGINE_URL}/apply-template",
+        data=body,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout):
+            return None
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read()).get("error", {}).get("message", "")
+        except Exception:
+            return None
+        # The engine returns the whole Jinja traceback, source line included.
+        # The last line carries the template's own message, which is the half
+        # written for a human.
+        lines = [line for line in str(detail).splitlines() if line.strip()]
+        return lines[-1] if lines else "the chat template rejected it"
+    except Exception:
+        return None
 
 
 def alive(target: int) -> bool:
@@ -304,6 +355,7 @@ def start(
     chat_template: str | None = None,
     mmproj: str | None = None,
     spec: speculation.Profile | None = None,
+    effort: str | None = None,
 ) -> tuple[bool, str]:
     """Launch llama-server and block until it answers.
 
@@ -326,6 +378,13 @@ def start(
     Both caches are quantised to :data:`CACHE_TYPE` -- the main one and the
     draft model's, which is a separate cache with a separate flag and does not
     inherit the setting. See :func:`spec_flags`.
+
+    ``effort`` is a reasoning level from :data:`REASONING_EFFORTS`, given to the
+    chat template for the life of the process. It is the only way to reach a
+    model's thinking-length control from a harness that has no idea it exists:
+    Claude Code's ``/effort`` travels as ``output_config.effort``, a field
+    llama.cpp does not implement and does not reject, so it is dropped in
+    silence and the template's own default -- ``xhigh`` on Qwen3.8-27B -- stands.
     """
     binary = server_binary()
     if not binary.exists():
@@ -337,6 +396,15 @@ def start(
     bad = not_a_gguf(Path(model_path))
     if bad:
         return False, bad
+    if effort and not supports("--reasoning-effort"):
+        # Refused rather than dropped. An optimisation this project adds by
+        # itself (see --spec-type below) is right to fall away silently on an
+        # older binary; a level the user typed is not, and dropping it would
+        # reproduce exactly the silence that makes this flag necessary.
+        return False, (
+            "this llama-server is too old for --reasoning-effort; "
+            "replace it with 'lllm3090 install-engine --force'"
+        )
     if mmproj:
         if not Path(mmproj).exists():
             return False, f"projector not found: {mmproj}"
@@ -392,6 +460,10 @@ def start(
                 # Vision: the projector is a separate GGUF that turns image
                 # input into embeddings the model can attend to.
                 *(["--mmproj", mmproj] if mmproj else []),
+                # Server-wide, because there is nowhere else to put it: the
+                # level is a launch argument, not a per-request one, on the
+                # endpoint an agent talks to. See REASONING_EFFORTS.
+                *(["--reasoning-effort", effort] if effort else []),
                 *(
                     ["--chat-template-file", str(
                         resources.files("lllm3090.data").joinpath(chat_template)
@@ -423,9 +495,18 @@ def start(
             return False, f"engine exited with {proc.returncode}: {tail}"
         if healthy():
             per = ctx // parallel
+            complaint = template_refuses_effort(effort) if effort else None
+            if complaint:
+                # A loaded engine that fails every request is worse than none:
+                # it answers /health, so anything watching it reports it up.
+                stop()
+                return False, (
+                    f"{name} does not accept --effort {effort}: {complaint}"
+                )
+            note = f", effort {effort}" if effort else ""
             return True, (
                 f"engine ready: {name} -- {per} tokens x {parallel} slots "
-                f"(pool {ctx})"
+                f"(pool {ctx}{note})"
             )
         time.sleep(1)
     return False, "engine did not become ready in time"

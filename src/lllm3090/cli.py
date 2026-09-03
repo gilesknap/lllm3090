@@ -267,8 +267,8 @@ def models() -> None:
     # spread than lies between some of the entries below -- so the column is
     # captioned rather than left to be read as a fact about this machine.
     rows = catalog.catalog_for_panel()
-    backend = rows[0]["backend"] if rows else engines.CPU
-    if backend not in (config.REFERENCE_BACKEND, engines.CPU):
+    backend = rows[0]["backend"] if rows else engines.UNKNOWN
+    if backend not in (config.REFERENCE_BACKEND, engines.UNKNOWN):
         typer.echo(
             f"The engine installed here is {backend}, and every speed below "
             f"was measured on {config.REFERENCE_BACKEND}.\nThey are shown "
@@ -475,8 +475,21 @@ def start(
             f"was not measured to win on. Known: {speculation.names()}."
         ),
     ),
+    effort: str = typer.Option(
+        None,
+        help="Reasoning level for the whole session: "
+             + ", ".join(engine.REASONING_EFFORTS) + ". Default: the model's.",
+    ),
 ) -> None:
     """Start the engine on an installed model."""
+    # Checked before the stop, deliberately: a typo is a typo, and taking a
+    # working engine down to report one costs a reload of the weights.
+    if effort is not None and effort not in engine.REASONING_EFFORTS:
+        typer.echo(
+            f"unknown effort {effort!r}; one of: "
+            f"{', '.join(engine.REASONING_EFFORTS)}"
+        )
+        raise typer.Exit(1)
     entry = next((m for m in catalog.installed() if m["name"] == model), None)
     if entry is None:
         typer.echo(f"{model!r} is not installed. Try: lllm3090 models")
@@ -507,8 +520,8 @@ def start(
     if profile is not None:
         typer.echo(f"Speculation: {spec.name} -- {spec.summary}")
     ok, detail = engine.start(
-        entry["path"], model, ctx, parallel, 300, template, entry.get("mmproj"),
-        spec,
+        entry["path"], model, ctx, parallel, 300, template,
+        entry.get("mmproj"), spec=spec, effort=effort,
     )
     typer.echo(detail)
     raise typer.Exit(0 if ok else 1)
@@ -717,7 +730,19 @@ def _offer_cuda(yes: bool) -> None:
     if not typer.confirm("\nBuild it now?", default=False):
         typer.echo("Skipped. 'lllm3090 build-cuda' does it later.")
         return
-    build_cuda(force=False)
+    try:
+        build_cuda(force=False)
+    except typer.Exit:
+        # The one optional step in `setup`, and it must not decide the outcome
+        # of the required ones. `build_cuda` reports its own failure and exits
+        # 1; uncaught, that leaves `setup` at step 5, so step 6 never runs and
+        # the panel unit is never written -- a machine with no panel because a
+        # compile it was offered as a bonus did not finish. Vulkan is already
+        # installed and serving at this point either way.
+        typer.echo(
+            "\nThe CUDA build did not finish. Carrying on with Vulkan, which "
+            "is what serves\neither way; 'lllm3090 build-cuda' retries it."
+        )
 
 
 @app.command()

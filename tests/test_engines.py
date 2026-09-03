@@ -198,12 +198,14 @@ def probe(monkeypatch, tmp_path):
     class Result:
         stdout = ""
         stderr = ""
+        returncode = 0
 
-    def answer(text: str) -> None:
+    def answer(text: str, returncode: int = 0) -> None:
         def fake_run(argv, **kw):
             calls.append(argv)
             out = Result()
             out.stdout = text
+            out.returncode = returncode
             return out
 
         monkeypatch.setattr(engines.subprocess, "run", fake_run)
@@ -241,9 +243,12 @@ def test_a_build_with_no_accelerator_is_cpu(probe):
 
 def test_an_engine_that_is_not_installed_is_not_a_crash(tmp_path):
     """`lllm3090 models` runs before `install-engine` on a fresh machine, and
-    it asks the planner, which asks this."""
+    it asks the planner, which asks this.
+
+    `unknown`, not `cpu`: there is no binary to have a backend, and the two
+    answers are read differently downstream."""
     engines._BACKENDS.clear()
-    assert engines.backend(tmp_path / "nothing-here") == "cpu"
+    assert engines.backend(tmp_path / "nothing-here") == "unknown"
 
 
 def test_the_probe_happens_once_per_binary(probe):
@@ -273,9 +278,35 @@ def test_a_probe_that_could_not_be_run_is_not_remembered(probe, monkeypatch):
         raise subprocess.TimeoutExpired(argv, 60)
 
     monkeypatch.setattr(engines.subprocess, "run", boom)
-    assert engines.backend(probe.directory) == "cpu"
+    assert engines.backend(probe.directory) == "unknown"
     probe(CUDA_DEVICES)
     assert engines.backend(probe.directory) == "cuda"
+
+
+def test_a_probe_that_exits_non_zero_is_unknown_and_is_not_remembered(probe):
+    """The failure this module exists to prevent, reached the other way.
+
+    A build whose backend fails to initialise prints its error and exits
+    non-zero, and the device list is then empty -- which parses as `cpu`. Left
+    uninspected that is wrong once; *cached*, a CUDA engine is `cpu` for the
+    life of a panel process, `catalog.fit` drops its KV factor and fixed
+    overhead, and the plan promises a window the card cannot hold.
+    """
+    probe("ggml_cuda_init: failed to initialise CUDA: no device\n", returncode=1)
+    assert engines.backend(probe.directory) == "unknown"
+    probe(CUDA_DEVICES)
+    assert engines.backend(probe.directory) == "cuda", "the failure was remembered"
+
+
+def test_a_cpu_build_is_an_answer_not_an_absence(probe):
+    """`cpu` and `unknown` must not be the same value.
+
+    A CPU-only engine cannot produce the catalogue's GPU speeds on any card,
+    so it is not waved through the way an unasked engine is.
+    """
+    probe("Available devices:\n")
+    assert engines.backend(probe.directory) == "cpu"
+    assert engines.CPU != engines.UNKNOWN
 
 
 @pytest.mark.parametrize("build,want", [

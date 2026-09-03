@@ -179,11 +179,27 @@ DEVICE_BACKENDS = {
     "metal": "metal",
 }
 
-#: What a build reports when it found no accelerator at all -- and what an
-#: engine that could not be asked is treated as. That is deliberate: ``cpu`` is
-#: the backend with no measured envelope of its own and no special flags, so
-#: falling back to it withholds a claim rather than making a wrong one.
+#: What a build reports when it found no accelerator at all.
+#:
+#: A real answer about a real binary, and therefore *not* what an engine that
+#: could not be asked is called -- see :data:`UNKNOWN`. The two were one value
+#: until a CPU-only build would have had the catalogue label Vulkan GPU speeds
+#: "measured" on an engine incapable of producing them.
 CPU = "cpu"
+
+#: What an engine that could not be asked is called -- nothing installed yet,
+#: a probe that timed out, a probe that exited non-zero.
+#:
+#: Distinct from :data:`CPU` because the two carry opposite claims. ``cpu`` is
+#: a fact about a binary -- no accelerator, so no measured speed here applies.
+#: ``unknown`` is the *absence* of a fact, and it has to stay the benign
+#: fallback: ``lllm3090 models`` runs before ``install-engine`` on a fresh
+#: machine, and qualifying every row there would be noise about a backend that
+#: is about to be Vulkan.
+#:
+#: Never cached, for the same reason a timeout is not: it is a statement about
+#: the moment, and the binary is still whatever it was compiled as.
+UNKNOWN = "unknown"
 
 #: Answers to :func:`backend`, keyed the way :func:`lllm3090.engine.supports`
 #: keys its own -- by path *and* mtime, because ``install-engine --force``
@@ -229,7 +245,7 @@ def backend(directory: Path | None = None) -> str:
         # No engine there at all. Not an error -- ``models`` runs happily
         # before ``install-engine`` on a fresh machine -- but nothing about a
         # binary that is not there can be claimed.
-        return CPU
+        return UNKNOWN
     if key in _BACKENDS:
         return _BACKENDS[key]
     try:
@@ -241,11 +257,22 @@ def backend(directory: Path | None = None) -> str:
             # happens to be found first would answer for the other.
             env=dict(os.environ, LD_LIBRARY_PATH=str(directory)),
         )
+        if out.returncode != 0:
+            # A probe that ran and failed says nothing about how the binary
+            # was compiled -- and left uninspected it said the wrong thing.
+            # ``--list-devices`` on a build whose backend fails to initialise
+            # prints its error and exits non-zero; the device list is then
+            # empty, which parses as ``cpu``, which would be *cached* for the
+            # life of a panel process. From there ``catalog.fit`` drops this
+            # backend's KV factor and fixed overhead and promises a window the
+            # card cannot hold. Same class as the timeout below, so same
+            # answer: refuse to remember it.
+            return UNKNOWN
         text = out.stdout + out.stderr
     except (OSError, subprocess.SubprocessError):
         # Not cached: a timeout under load is a fact about the moment, and
         # remembering it would make one busy minute permanent.
-        return CPU
+        return UNKNOWN
     _BACKENDS[key] = _backend_from_devices(text)
     return _BACKENDS[key]
 

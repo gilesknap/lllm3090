@@ -645,9 +645,14 @@ def speed_qualifier(
     compute capability is in :func:`capability_ok`. ``lllm3090 models`` runs
     before ``install-engine`` on a fresh machine, and qualifying every row on
     that basis would be pure noise about a backend that is about to be Vulkan.
+
+    That licence belongs to :data:`lllm3090.engines.UNKNOWN` alone. A build
+    that reports ``cpu`` **is** an answer, and the wrong one to wave through:
+    the catalogue's speeds are GPU speeds, and an engine with no accelerator
+    cannot produce them on any card, measured or not.
     """
     right_card = profile.measured
-    right_backend = backend in (config.REFERENCE_BACKEND, engines.CPU)
+    right_backend = backend in (config.REFERENCE_BACKEND, engines.UNKNOWN)
     if right_card and right_backend:
         return True, "measured"
     if right_card:

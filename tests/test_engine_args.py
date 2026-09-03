@@ -244,3 +244,61 @@ def test_a_width_the_binary_has_never_heard_of_is_not_passed(with_mtp, monkeypat
     argv = seen[0]
     assert argv[argv.index("--spec-type") + 1] == "draft-mtp,ngram-cache"
     assert "--spec-draft-n-max" not in argv
+def test_an_effort_level_is_handed_to_the_engine(fake_engine):
+    """The only route to a model's thinking control: Claude Code's own
+    `/effort` travels as `output_config.effort`, which llama.cpp neither
+    implements nor rejects, so it never reaches the template."""
+    seen, model, _ = fake_engine
+    ok, _ = engine.start(str(model), "M", 4096, 2, 0, None, None, effort="low")
+    assert ok
+    argv = seen[0]
+    assert argv[argv.index("--reasoning-effort") + 1] == "low"
+
+
+def test_no_effort_means_no_flag(fake_engine):
+    """Omitting it leaves the template's own default in charge, which is what
+    every start before this flag existed did."""
+    seen, model, _ = fake_engine
+    engine.start(str(model), "M", 4096, 2, 0, None, None, effort=None)
+    assert "--reasoning-effort" not in seen[0]
+
+
+def test_an_engine_too_old_for_the_flag_is_refused(fake_engine, monkeypatch):
+    """The opposite of how --spec-type degrades, on purpose. A level the user
+    typed must not be dropped in silence -- silence is the failure this flag
+    exists to fix."""
+    seen, model, _ = fake_engine
+    monkeypatch.setattr(engine, "supports", lambda flag: flag != "--reasoning-effort")
+    ok, detail = engine.start(str(model), "M", 4096, 2, 0, None, None, effort="low")
+    assert not ok
+    assert "--reasoning-effort" in detail
+    assert not seen, "must not launch the engine at all"
+
+
+def test_a_level_the_template_refuses_fails_the_start(fake_engine, monkeypatch):
+    """A loaded engine that 500s on every request is worse than no engine: it
+    answers /health, so everything watching it reports it up."""
+    _, model, _ = fake_engine
+    monkeypatch.setattr(engine, "healthy", lambda: True)
+    monkeypatch.setattr(
+        engine, "template_refuses_effort",
+        lambda effort, **kw: f"Unexpected reasoning effort {effort}.",
+    )
+    stopped = []
+    monkeypatch.setattr(engine, "stop", lambda *a, **kw: stopped.append(True))
+    ok, detail = engine.start(
+        str(model), "M", 4096, 2, 300, None, None, effort="minimal"
+    )
+    assert not ok
+    assert "does not accept --effort minimal" in detail
+    assert "Unexpected reasoning effort minimal." in detail
+    assert stopped, "the engine it just started must not be left serving errors"
+
+
+def test_a_level_the_template_accepts_starts_normally(fake_engine, monkeypatch):
+    _, model, _ = fake_engine
+    monkeypatch.setattr(engine, "healthy", lambda: True)
+    monkeypatch.setattr(engine, "template_refuses_effort", lambda effort, **kw: None)
+    ok, detail = engine.start(str(model), "M", 4096, 2, 300, None, None, effort="low")
+    assert ok
+    assert "effort low" in detail, "the level is worth seeing in the ready line"

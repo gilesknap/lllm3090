@@ -12,6 +12,29 @@ change is only visible in the source it does not need a line here.
 
 ### Fixed
 
+- **An engine that could not be asked is no longer confused with a CPU one.**
+  `engines.backend()` answered `cpu` for three different situations — a real
+  CPU-only build, no engine installed yet, and a probe that failed — and
+  `speed_qualifier` waved `cpu` through as "no objection" so that
+  `lllm3090 models` would not caption every row on a fresh machine. A genuine
+  CPU build therefore had the catalogue's GPU speeds labelled `measured` on an
+  engine incapable of producing them. There is now a separate `unknown`, and it
+  alone carries that licence.
+
+  The sharper half is that a probe exiting non-zero was *cached*. A build whose
+  backend fails to initialise prints its error and exits 1, leaving an empty
+  device list that parsed as `cpu` — and in the long-lived panel process a CUDA
+  engine then stayed `cpu`, dropping its KV factor and fixed overhead, so the
+  plan promised a window the card could not hold. That is the failure this
+  module exists to prevent, reached from the other side. A failed probe is a
+  fact about the moment, exactly like the timeout the code already refused to
+  remember, and is now treated the same way.
+- **An optional CUDA build can no longer cost you the panel.** `setup` offers
+  to compile a CUDA engine at step 5 and installs the systemd unit at step 6.
+  `build_cuda` exits 1 on a build failure, and nothing caught it, so a compile
+  that died after twenty minutes took `setup` with it and the panel unit was
+  never written. Vulkan is installed and serving by that point either way; the
+  one optional step must not decide the outcome of the required ones.
 - **The planner now knows which backend it is planning for.** `catalog.fit`
   priced a token of KV cache with one constant that was covering four unrelated
   things, so it gave both backends the same window — and on CUDA that window
@@ -126,6 +149,25 @@ change is only visible in the source it does not need a line here.
   Vulkan prose — because verifying a draft is a batched forward pass and Vulkan
   gets nothing from a wider batch. A "go faster" switch that did not know which
   backend it was on would be a footgun aimed at the default install.
+
+- **`lllm3090 start <model> --effort <level>`** sets how long the model thinks,
+  because the harness cannot. Claude Code's own `/effort` sends
+  `output_config.effort`, a field llama.cpp neither implements nor rejects — the
+  request returns 200 and the level is dropped in silence, so the session goes
+  on displaying an effort that never left the client. The engine's
+  `--reasoning-effort` is the one route that reaches the chat template, and it
+  is a launch argument, so this is where it belongs.
+
+  It matters most where nothing looked wrong: `Qwen3.8-27B`'s template defaults
+  to `xhigh` and tells the model to "think carefully, validate key assumptions,
+  consider plausible alternatives" on every turn. On a card where the context
+  window runs out long before the clock does, that default is expensive and
+  invisible.
+
+  A level the model's template does not implement — `minimal` on that same
+  model — raises while rendering, which is a 500 on every request from an
+  engine that loads normally and answers `/health`. `start` renders one prompt
+  before it reports ready, and refuses rather than leaving that engine up.
 
 - **An explanation of what actually makes a local model fast**
   (`docs/explanations/what-makes-it-fast.md`), written for someone who has not
